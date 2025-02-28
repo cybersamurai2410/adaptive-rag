@@ -7,7 +7,36 @@ Developed application with front-end UI and back-end API using Adaptive RAG, whi
 
 ## API Requests
 ```
-curl -X POST http://127.0.0.1:5000/ask -H "Content-Type: application/json" -d '{"question": "How to build a dyson sphere?"}'
+curl -X POST http://127.0.0.1:5000/ask -H "Content-Type: application/json" -d '{"question": "What are types of agent memory?"}'
 ```
+**Ouput Logs:**
+```
+---ROUTE QUESTION---
+---ROUTE QUESTION TO RAG---
+---RETRIEVE---
+"Node 'retrieve':"
+'\n---\n'
+---CHECK DOCUMENT RELEVANCE TO QUESTION---
+---GRADE: DOCUMENT NOT RELEVANT---
+---GRADE: DOCUMENT RELEVANT---
+---GRADE: DOCUMENT NOT RELEVANT---
+---GRADE: DOCUMENT RELEVANT---
+---ASSESS GRADED DOCUMENTS---
+---DECISION: GENERATE---
+"Node 'grade_documents':"
+'\n---\n'
+---GENERATE---
+---CHECK HALLUCINATIONS---
+---DECISION: GENERATION IS GROUNDED IN DOCUMENTS---
+---GRADE GENERATION vs QUESTION---
+---DECISION: GENERATION ADDRESSES QUESTION---
+"Node 'generate':"
+'\n---\n'
+('The types of agent memory include short-term memory, long-term memory, and '
+ 'sensory memory. Short-term memory is utilized for in-context learning, while '
+ 'long-term memory allows for the retention and recall of information over '
+ 'extended periods. Sensory memory involves learning embedding representations '
+ 'for various raw inputs, such as text and images.')
+ ```
 ## React UI
 <img width="611" alt="image" src="https://github.com/user-attachments/assets/dfe5337d-cce8-4dfe-8702-be29bd3a139c" />
