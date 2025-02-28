@@ -10,4 +10,4 @@ Developed application with front-end UI and back-end API using Adaptive RAG, whi
 curl -X POST http://127.0.0.1:5000/ask -H "Content-Type: application/json" -d '{"question": "How to build a dyson sphere?"}'
 ```
 ## React UI
-<img width="647" alt="image" src="https://github.com/user-attachments/assets/3be09e29-4fdd-4952-9a99-234ba8cc111e" />
+<img width="611" alt="image" src="https://github.com/user-attachments/assets/dfe5337d-cce8-4dfe-8702-be29bd3a139c" />
