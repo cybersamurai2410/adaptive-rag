@@ -38,5 +38,3 @@ curl -X POST http://127.0.0.1:5000/ask -H "Content-Type: application/json" -d '{
  'extended periods. Sensory memory involves learning embedding representations '
  'for various raw inputs, such as text and images.')
  ```
-## React UI
-<img width="611" alt="image" src="https://github.com/user-attachments/assets/dfe5337d-cce8-4dfe-8702-be29bd3a139c" />
