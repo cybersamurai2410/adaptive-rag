@@ -1,40 +1,54 @@
-# Adaptive Multimodal RAG with Query Analysis and Self-Reflection 
-Developed application with front-end UI and back-end API using Adaptive RAG, which combines query analysis and active/self-correction RAG. The query analysis routs the LLM call to respond without RAG using web search or invoke single-shot and iterative RAG with self-correction. The architecture was inspired by the research paper **[Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity](https://arxiv.org/pdf/2403.14403)**
+# Adaptive Multimodal RAG with Query Analysis and Self-Reflection
 
-## Architecture
-![tmpn5i8_n2i](https://github.com/user-attachments/assets/7af982c9-3ac0-46d0-902f-13a2778c9e30)
-![image](https://github.com/user-attachments/assets/a1d09c7e-103e-4e22-aaea-1bce706b06a7)
+This project implements an adaptive RAG application with:
+- **Frontend UI** (`frontend/`)
+- **Backend API** (`backend/`) using **LangGraph + LangChain**
+- **Weaviate** for multi-vector storage/retrieval over multimodal paper chunks
 
-## API Requests
+## Backend focus (current)
+The backend now targets the CV-aligned flow:
+1. Ingest research papers from:
+   - uploaded PDF files, or
+   - arXiv IDs/URLs (downloaded as PDF from arXiv)
+2. Extract multimodal content (text, tables, and real extracted images) from PDF.
+3. Build multi-vector representations using a shared CLIP embedding space across text and image patches.
+4. Retrieve relevant evidence and generate grounded answers with references.
+
+## Repository Structure
+- `backend/` — Flask API, adaptive graph, Weaviate vector ops, arXiv ingestion.
+- `frontend/` — React client app.
+
+## Run Backend
+```bash
+cd backend
+pip install -r requirements.txt
+python api.py
 ```
-curl -X POST http://127.0.0.1:5000/ask -H "Content-Type: application/json" -d '{"question": "What are types of agent memory?"}'
+
+## API
+### Upload paper(s)
+```bash
+curl -X POST http://127.0.0.1:5000/upload \
+  -F "files=@/path/to/paper.pdf" \
+  -F "arxiv_ids=2403.14403" \
+  -F "arxiv_ids=https://arxiv.org/abs/2403.14403"
 ```
-**Ouput Logs:**
+
+### Ask question (grounded with references)
+```bash
+curl -X POST http://127.0.0.1:5000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What is the main contribution?", "paper_id": "2403.14403"}'
 ```
----ROUTE QUESTION---
----ROUTE QUESTION TO RAG---
----RETRIEVE---
-"Node 'retrieve':"
-'\n---\n'
----CHECK DOCUMENT RELEVANCE TO QUESTION---
----GRADE: DOCUMENT NOT RELEVANT---
----GRADE: DOCUMENT RELEVANT---
----GRADE: DOCUMENT NOT RELEVANT---
----GRADE: DOCUMENT RELEVANT---
----ASSESS GRADED DOCUMENTS---
----DECISION: GENERATE---
-"Node 'grade_documents':"
-'\n---\n'
----GENERATE---
----CHECK HALLUCINATIONS---
----DECISION: GENERATION IS GROUNDED IN DOCUMENTS---
----GRADE GENERATION vs QUESTION---
----DECISION: GENERATION ADDRESSES QUESTION---
-"Node 'generate':"
-'\n---\n'
-('The types of agent memory include short-term memory, long-term memory, and '
- 'sensory memory. Short-term memory is utilized for in-context learning, while '
- 'long-term memory allows for the retention and recall of information over '
- 'extended periods. Sensory memory involves learning embedding representations '
- 'for various raw inputs, such as text and images.')
- ```
+
+### Delete indexed paper
+```bash
+curl -X POST http://127.0.0.1:5000/delete \
+  -H "Content-Type: application/json" \
+  -d '{"paper_id": "2403.14403"}'
+```
+
+
+## Model Configuration
+- `CHAT_MODEL` (default: `gpt-5-mini`) for routing, grading, and generation.
+- `MM_EMBED_MODEL` (default: `sentence-transformers/clip-ViT-B-32`) for multimodal embeddings.
