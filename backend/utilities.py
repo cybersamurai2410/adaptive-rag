@@ -1,3 +1,4 @@
+import os
 from typing import List, Literal
 
 from pydantic import BaseModel, Field
@@ -6,8 +7,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.tools.tavily_search import TavilySearchResults
 
-# Multimodal-capable LLM for synthesis/grounding checks
-llm = ChatOpenAI(model="gpt-4o", temperature=0)
+# Configurable LLM (default GPT-5 family)
+CHAT_MODEL = os.getenv("CHAT_MODEL", "gpt-5-mini")
+llm = ChatOpenAI(model=CHAT_MODEL, temperature=0)
 
 
 class RouteQuery(BaseModel):
@@ -19,7 +21,7 @@ question_router = (
         [
             (
                 "system",
-                "Route to paper_rag for questions about uploaded/arXiv papers, figures, tables, methods, or references. "
+                "Route to paper_rag for questions about uploaded/arXiv papers, methods, figures, tables, or references. "
                 "Route to web_search only for out-of-corpus questions.",
             ),
             ("human", "{question}"),
@@ -93,14 +95,14 @@ rag_prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "You are a research assistant. Answer from provided evidence only. "
-            "Use references inline like [paper_id p.X modality]."
-            "If uncertain, say evidence is insufficient.",
+            "You are a research assistant. Answer ONLY from retrieved evidence. "
+            "Use inline references like [paper_id p.X modality]. "
+            "If evidence is missing, explicitly say insufficient evidence.",
         ),
         (
             "human",
             "Question:\n{question}\n\nRetrieved Evidence:\n{context}\n\n"
-            "Provide:\n1) Direct answer\n2) Key evidence bullets\n3) References list",
+            "Return:\n1) concise answer\n2) evidence bullets\n3) references",
         ),
     ]
 )
@@ -114,6 +116,6 @@ def format_docs_for_prompt(docs: List) -> str:
     for i, d in enumerate(docs, start=1):
         ref = d.metadata.get("reference", "unknown")
         score = d.metadata.get("late_interaction_score")
-        score_str = f"score={score:.3f}" if isinstance(score, (float, int)) else "score=n/a"
+        score_str = f"score={score:.4f}" if isinstance(score, (int, float)) else "score=n/a"
         blocks.append(f"[{i}] {ref} ({score_str})\n{d.page_content}")
     return "\n\n".join(blocks)

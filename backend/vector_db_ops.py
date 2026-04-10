@@ -1,22 +1,29 @@
+import json
 import os
 import re
-import json
 import uuid
-import requests
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-import fitz  # PyMuPDF
-from PIL import Image
+import fitz
+import numpy as np
+import requests
 import weaviate
+from PIL import Image
+from langchain_core.documents import Document
 from weaviate.classes.config import Configure, DataType, Property
 from weaviate.classes.query import Filter, MetadataQuery
-from langchain_core.documents import Document
 
 from multimodal_models import MultiModalEmbedder
 
 
 class VectorDB:
-    """Weaviate multi-vector store for multimodal arXiv paper retrieval with late interaction."""
+    """
+    Weaviate-backed multimodal multi-vector index.
+
+    - Ingestion: extracts text / tables / images from PDFs.
+    - Embedding: produces multiple vectors per unit (text windows or image patches).
+    - Retrieval: ANN candidate generation + exact late interaction (MaxSim) rerank.
+    """
 
     def __init__(self, db_file: str = "db.json"):
         self.db_file = db_file
@@ -32,22 +39,26 @@ class VectorDB:
 
     def _ensure_schema(self) -> None:
         collections = self.client.collections
-        if not collections.exists(self.collection_name):
-            collections.create(
-                name=self.collection_name,
-                vectorizer_config=Configure.Vectorizer.none(),
-                properties=[
-                    Property(name="paper_id", data_type=DataType.TEXT),
-                    Property(name="source_name", data_type=DataType.TEXT),
-                    Property(name="doc_id", data_type=DataType.TEXT),
-                    Property(name="subvector_id", data_type=DataType.TEXT),
-                    Property(name="modality", data_type=DataType.TEXT),
-                    Property(name="page", data_type=DataType.INT),
-                    Property(name="content", data_type=DataType.TEXT),
-                    Property(name="reference", data_type=DataType.TEXT),
-                    Property(name="image_path", data_type=DataType.TEXT),
-                ],
-            )
+        if collections.exists(self.collection_name):
+            return
+
+        collections.create(
+            name=self.collection_name,
+            vectorizer_config=Configure.Vectorizer.none(),
+            properties=[
+                Property(name="paper_id", data_type=DataType.TEXT),
+                Property(name="source_name", data_type=DataType.TEXT),
+                Property(name="doc_id", data_type=DataType.TEXT),
+                Property(name="subvector_id", data_type=DataType.TEXT),
+                Property(name="modality", data_type=DataType.TEXT),
+                Property(name="page", data_type=DataType.INT),
+                Property(name="content", data_type=DataType.TEXT),
+                Property(name="reference", data_type=DataType.TEXT),
+                Property(name="image_path", data_type=DataType.TEXT),
+                # Stored to run exact MaxSim rerank after ANN retrieval.
+                Property(name="embedding_json", data_type=DataType.TEXT),
+            ],
+        )
 
     def load_db(self) -> Dict[str, Any]:
         if os.path.exists(self.db_file):
@@ -71,7 +82,7 @@ class VectorDB:
         text = re.sub(r"\s+", " ", (text or "")).strip()
         if not text:
             return []
-        chunks: List[str] = []
+        chunks = []
         i = 0
         while i < len(text):
             j = min(len(text), i + chunk_size)
@@ -84,9 +95,9 @@ class VectorDB:
     def _extract_pdf_multimodal(self, pdf_path: str, image_dir: str = "uploads/images") -> List[Dict[str, Any]]:
         os.makedirs(image_dir, exist_ok=True)
         doc = fitz.open(pdf_path)
-        out: List[Dict[str, Any]] = []
         base = self._safe_id(os.path.splitext(os.path.basename(pdf_path))[0])
 
+        out: List[Dict[str, Any]] = []
         try:
             for pidx in range(len(doc)):
                 page = doc[pidx]
@@ -95,21 +106,14 @@ class VectorDB:
                 # text
                 page_text = page.get_text("text")
                 for chunk in self._split_text(page_text):
-                    out.append(
-                        {
-                            "modality": "text",
-                            "page": page_num,
-                            "content": chunk,
-                            "image_path": "",
-                        }
-                    )
+                    out.append({"modality": "text", "page": page_num, "content": chunk, "image_path": ""})
 
-                # tables (as textual rows)
+                # tables as text rows
                 try:
                     tables = page.find_tables()
                     for tidx, table in enumerate(tables.tables):
                         rows = table.extract() or []
-                        rows_txt = [" | ".join([(c or "") for c in r]) for r in rows]
+                        rows_txt = [" | ".join([(c or "") for c in row]) for row in rows]
                         table_text = "\n".join(rows_txt).strip()
                         if table_text:
                             out.append(
@@ -123,7 +127,7 @@ class VectorDB:
                 except Exception:
                     pass
 
-                # images (extract raw image bytes and store path)
+                # images
                 images = page.get_images(full=True)
                 for iidx, img in enumerate(images):
                     xref = img[0]
@@ -149,8 +153,6 @@ class VectorDB:
         if item["modality"] == "image" and item.get("image_path"):
             image = Image.open(item["image_path"]).convert("RGB")
             return self.embedder.embed_image_multi(image, grid=2)
-
-        # text/table multimodal vectors
         return self.embedder.embed_text_multi(item["content"])
 
     def store_pdf(self, pdf_path: str, paper_id: Optional[str] = None) -> Dict[str, Any]:
@@ -162,17 +164,16 @@ class VectorDB:
         collection = self.client.collections.get(self.collection_name)
 
         object_ids: List[str] = []
-        doc_count = 0
-        subvector_count = 0
+        doc_units = 0
+        subvectors = 0
 
         with collection.batch.dynamic() as batch:
             for item in items:
-                doc_count += 1
+                doc_units += 1
                 doc_id = str(uuid.uuid4())
                 reference = f"{paper_id} p.{item['page']} [{item['modality']}]"
-                vectors = self._vectors_for_item(item)
 
-                for vidx, vec in enumerate(vectors):
+                for vidx, vec in enumerate(self._vectors_for_item(item)):
                     oid = str(uuid.uuid4())
                     batch.add_object(
                         uuid=oid,
@@ -186,80 +187,93 @@ class VectorDB:
                             "content": item["content"],
                             "reference": reference,
                             "image_path": item.get("image_path", ""),
+                            "embedding_json": json.dumps(vec),
                         },
                         vector=vec,
                     )
                     object_ids.append(oid)
-                    subvector_count += 1
+                    subvectors += 1
 
         self.add_document_db(paper_id, object_ids)
-        return {
-            "paper_id": paper_id,
-            "doc_units": doc_count,
-            "subvectors": subvector_count,
-        }
+        return {"paper_id": paper_id, "doc_units": doc_units, "subvectors": subvectors}
+
+    def _dot(self, a: np.ndarray, b: np.ndarray) -> float:
+        return float(np.dot(a, b))
+
+    def _maxsim_score(self, q_vectors: List[np.ndarray], d_vectors: List[np.ndarray]) -> float:
+        if not q_vectors or not d_vectors:
+            return 0.0
+        token_max = []
+        for qv in q_vectors:
+            best = max(self._dot(qv, dv) for dv in d_vectors)
+            token_max.append(best)
+        return float(np.mean(token_max))
 
     def search(self, question: str, paper_id: Optional[str] = None, top_k: int = 8) -> List[Document]:
-        """
-        Late-interaction style retrieval approximation:
-        1) Produce multiple query token vectors.
-        2) For each query vector, retrieve nearest subvectors from Weaviate.
-        3) Aggregate by doc_id using MaxSim over query token hits.
-        """
         collection = self.client.collections.get(self.collection_name)
-        qvectors = self.embedder.embed_query_multi(question)
-        if not qvectors:
+        q_items = self.embedder.embed_query_multi(question)
+        q_vectors = [np.array(q.vector, dtype=np.float32) for q in q_items]
+        if not q_vectors:
             return []
 
         where_filter = Filter.by_property("paper_id").equal(paper_id) if paper_id else None
 
-        # doc_id -> token -> best similarity, plus representative metadata
-        scores: Dict[str, Dict[str, Any]] = {}
-
-        for qv in qvectors:
-            resp = collection.query.near_vector(
-                near_vector=qv.vector,
-                limit=max(12, top_k * 2),
+        # 1) candidate generation from ANN for each query token vector
+        candidate_doc_ids: set[str] = set()
+        for q in q_items:
+            ann = collection.query.near_vector(
+                near_vector=q.vector,
+                limit=max(12, top_k * 4),
                 filters=where_filter,
                 return_metadata=MetadataQuery(distance=True),
             )
-            for obj in resp.objects:
-                props = obj.properties
-                doc_id = props["doc_id"]
-                distance = obj.metadata.distance if obj.metadata and obj.metadata.distance is not None else 1.0
-                similarity = max(0.0, 1.0 - float(distance))
+            for obj in ann.objects:
+                candidate_doc_ids.add(obj.properties["doc_id"])
 
-                if doc_id not in scores:
-                    scores[doc_id] = {
-                        "token_sims": {},
-                        "content": props["content"],
-                        "metadata": {
-                            "paper_id": props["paper_id"],
-                            "source_name": props["source_name"],
-                            "modality": props["modality"],
-                            "page": props["page"],
-                            "reference": props["reference"],
-                            "image_path": props.get("image_path", ""),
-                        },
-                    }
+        if not candidate_doc_ids:
+            return []
 
-                prev = scores[doc_id]["token_sims"].get(qv.token, 0.0)
-                if similarity > prev:
-                    scores[doc_id]["token_sims"][qv.token] = similarity
-
+        # 2) exact MaxSim rerank using stored subvectors per candidate doc_id
         ranked = []
-        for doc_id, record in scores.items():
-            token_values = list(record["token_sims"].values())
-            # MaxSim aggregate (sum of best similarities per query token)
-            score = sum(token_values) / max(1, len(qvectors))
-            ranked.append((score, record))
+        for doc_id in candidate_doc_ids:
+            objs = collection.query.fetch_objects(
+                filters=Filter.by_property("doc_id").equal(doc_id),
+                limit=256,
+            )
+            d_vectors: List[np.ndarray] = []
+            representative = None
+            for obj in objs.objects:
+                props = obj.properties
+                try:
+                    d_vectors.append(np.array(json.loads(props["embedding_json"]), dtype=np.float32))
+                except Exception:
+                    continue
+                if representative is None:
+                    representative = props
+
+            if not d_vectors or representative is None:
+                continue
+
+            score = self._maxsim_score(q_vectors, d_vectors)
+            ranked.append((score, representative))
 
         ranked.sort(key=lambda x: x[0], reverse=True)
         top = ranked[:top_k]
 
         return [
-            Document(page_content=r["content"], metadata={**r["metadata"], "late_interaction_score": s})
-            for s, r in top
+            Document(
+                page_content=item["content"],
+                metadata={
+                    "paper_id": item["paper_id"],
+                    "source_name": item["source_name"],
+                    "modality": item["modality"],
+                    "page": item["page"],
+                    "reference": item["reference"],
+                    "image_path": item.get("image_path", ""),
+                    "late_interaction_score": score,
+                },
+            )
+            for score, item in top
         ]
 
     def delete_document_vectordb(self, paper_id: str) -> bool:

@@ -47,3 +47,8 @@ curl -X POST http://127.0.0.1:5000/delete \
   -H "Content-Type: application/json" \
   -d '{"paper_id": "2403.14403"}'
 ```
+
+
+## Model Configuration
+- `CHAT_MODEL` (default: `gpt-5-mini`) for routing, grading, and generation.
+- `MM_EMBED_MODEL` (default: `sentence-transformers/clip-ViT-B-32`) for multimodal embeddings.
