@@ -1,138 +1,125 @@
-from typing import Literal
-from pydantic import BaseModel, Field
+from typing import List, Literal
 
-from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
-from langchain import hub
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.tools.tavily_search import TavilySearchResults
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
-### Router
+
 class RouteQuery(BaseModel):
-    """Route a user query to the most relevant datasource."""
+    """Route question to paper RAG or web search."""
 
-    datasource: Literal["vectorstore", "web_search"] = Field(
-        ...,
-        description="Given a user question choose to route it to web search or a vectorstore.",
+    datasource: Literal["paper_rag", "web_search"] = Field(
+        ..., description="Route to paper_rag when question is about uploaded paper(s), otherwise web_search."
     )
 
-structured_llm_router = llm.with_structured_output(RouteQuery)
 
-system = """You are an expert at routing a user question to a vectorstore or web search.
-The vectorstore contains documents related to agents, prompt engineering, and adversarial attacks.
-Use the vectorstore for questions on these topics. Otherwise, use web-search."""
-route_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", system),
-        ("human", "{question}"),
-    ]
+question_router = (
+    ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "You are a routing agent. If the user asks about uploaded arXiv papers, methods, tables, figures,"
+                " or citations from those papers, route to paper_rag. For current events or outside knowledge, route to web_search.",
+            ),
+            ("human", "{question}"),
+        ]
+    )
+    | llm.with_structured_output(RouteQuery)
 )
-question_router = route_prompt | structured_llm_router
 
-# print(
-#     question_router.invoke(
-#         {"question": "Who will the Bears draft first in the NFL draft?"}
-#     )
-# )
-# print(question_router.invoke({"question": "What are the types of agent memory?"}))
 
-### Retrieval Grader
 class GradeDocuments(BaseModel):
-    """Binary score for relevance check on retrieved documents."""
+    binary_score: Literal["yes", "no"] = Field(description="Whether document is relevant to question")
 
-    binary_score: str = Field(
-        description="Documents are relevant to the question, 'yes' or 'no'"
+
+retrieval_grader = (
+    ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "Grade whether the retrieved evidence is relevant to the question. "
+                "Answer only with yes or no.",
+            ),
+            ("human", "Question:\n{question}\n\nEvidence:\n{document}"),
+        ]
     )
-
-structured_llm_grader = llm.with_structured_output(GradeDocuments)
-
-system = """You are a grader assessing relevance of a retrieved document to a user question. \n 
-    If the document contains keyword(s) or semantic meaning related to the user question, grade it as relevant. \n
-    It does not need to be a stringent test. The goal is to filter out erroneous retrievals. \n
-    Give a binary score 'yes' or 'no' score to indicate whether the document is relevant to the question."""
-grade_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", system),
-        ("human", "Retrieved document: \n\n {document} \n\n User question: {question}"),
-    ]
+    | llm.with_structured_output(GradeDocuments)
 )
-retrieval_grader = grade_prompt | structured_llm_grader
 
-# question = "agent memory"
-# docs = retriever.invoke(question)
-# doc_txt = docs[1].page_content
-# print(retrieval_grader.invoke({"question": question, "document": doc_txt}))
 
-### Generate
-prompt = hub.pull("rlm/rag-prompt")
-def format_docs(docs):
-    return "\n\n".join(doc.page_content for doc in docs)
-rag_chain = prompt | llm | StrOutputParser()
-
-# generation = rag_chain.invoke({"context": docs, "question": question})
-# print(generation)
-
-### Hallucination Grader
 class GradeHallucinations(BaseModel):
-    """Binary score for hallucination present in generation answer."""
+    binary_score: Literal["yes", "no"] = Field(description="Whether answer is grounded in evidence")
 
-    binary_score: str = Field(
-        description="Answer is grounded in the facts, 'yes' or 'no'"
+
+hallucination_grader = (
+    ChatPromptTemplate.from_messages(
+        [
+            ("system", "Decide if answer is grounded in provided evidence. Return yes or no."),
+            ("human", "Evidence:\n{documents}\n\nAnswer:\n{generation}"),
+        ]
     )
-
-structured_llm_grader = llm.with_structured_output(GradeHallucinations)
-
-system = """You are a grader assessing whether an LLM generation is grounded in / supported by a set of retrieved facts. \n 
-     Give a binary score 'yes' or 'no'. 'Yes' means that the answer is grounded in / supported by the set of facts."""
-hallucination_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", system),
-        ("human", "Set of facts: \n\n {documents} \n\n LLM generation: {generation}"),
-    ]
+    | llm.with_structured_output(GradeHallucinations)
 )
 
-hallucination_grader = hallucination_prompt | structured_llm_grader
-# hallucination_grader.invoke({"documents": docs, "generation": generation})
 
-### Answer Grader
 class GradeAnswer(BaseModel):
-    """Binary score to assess answer addresses question."""
+    binary_score: Literal["yes", "no"] = Field(description="Whether answer addresses the question")
 
-    binary_score: str = Field(
-        description="Answer addresses the question, 'yes' or 'no'"
+
+answer_grader = (
+    ChatPromptTemplate.from_messages(
+        [
+            ("system", "Decide if answer addresses the user question. Return yes or no."),
+            ("human", "Question:\n{question}\n\nAnswer:\n{generation}"),
+        ]
     )
-
-structured_llm_grader = llm.with_structured_output(GradeAnswer)
-
-system = """You are a grader assessing whether an answer addresses / resolves a question \n 
-     Give a binary score 'yes' or 'no'. Yes' means that the answer resolves the question."""
-answer_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", system),
-        ("human", "User question: \n\n {question} \n\n LLM generation: {generation}"),
-    ]
+    | llm.with_structured_output(GradeAnswer)
 )
 
-answer_grader = answer_prompt | structured_llm_grader
-# answer_grader.invoke({"question": question, "generation": generation})
 
-### Question Re-writer
-system = """You a question re-writer that converts an input question to a better version that is optimized \n 
-     for vectorstore retrieval. Look at the input and try to reason about the underlying semantic intent / meaning."""
-re_write_prompt = ChatPromptTemplate.from_messages(
+question_rewriter = (
+    ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "Rewrite the question to improve scholarly retrieval over paper text, tables, and figures.",
+            ),
+            ("human", "Original question:\n{question}"),
+        ]
+    )
+    | llm
+    | StrOutputParser()
+)
+
+
+rag_prompt = ChatPromptTemplate.from_messages(
     [
-        ("system", system),
+        (
+            "system",
+            "You are an academic assistant. Use only provided context. "
+            "If evidence is insufficient, say so clearly. "
+            "Include concise inline references like [source p.X modality].",
+        ),
         (
             "human",
-            "Here is the initial question: \n\n {question} \n Formulate an improved question.",
+            "Question:\n{question}\n\nContext:\n{context}\n\n"
+            "Return a concise answer followed by a short 'References' list.",
         ),
     ]
 )
 
-question_rewriter = re_write_prompt | llm | StrOutputParser()
-# question_rewriter.invoke({"question": question})
+rag_chain = rag_prompt | llm | StrOutputParser()
 
-# Search  
 web_search_tool = TavilySearchResults(k=3)
+
+
+def format_docs_for_prompt(docs: List) -> str:
+    rows = []
+    for i, d in enumerate(docs, start=1):
+        ref = d.metadata.get("reference", "unknown")
+        rows.append(f"[{i}] {ref}\n{d.page_content}")
+    return "\n\n".join(rows)

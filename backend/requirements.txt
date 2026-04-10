@@ -1,0 +1,11 @@
+flask
+flask-cors
+python-dotenv
+requests
+pymupdf
+weaviate-client
+langchain
+langgraph
+langchain-openai
+langchain-community
+pydantic

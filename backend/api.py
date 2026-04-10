@@ -1,82 +1,126 @@
+import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from vector_db_ops import VectorDB 
-from graph_agents import compile_graph
 from dotenv import load_dotenv
-import os
+
+from graph_agents import compile_graph
+from vector_db_ops import VectorDB, download_arxiv_pdf
 
 load_dotenv()
-app = Flask(__name__)  # Initialize Flask app
-graph_app = compile_graph()  # Load LangGraph agentic workflow
-CORS(app)  # Enables React to send requests to Flask
-vector_db = VectorDB()
 
-UPLOAD_FOLDER = "uploads" # Save files locally since Flask stores temporary file objects and are not accessible when functions require file paths in parameters 
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)  # Creates "uploads/" folder if missing
+app = Flask(__name__)
+CORS(app)
+
+UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "uploads")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
-# API to Process Uploaded Files and URLs
+vector_db = VectorDB()
+graph_app = compile_graph()
+
+
 @app.route("/upload", methods=["POST"])
 def upload():
-    # Get lists from UI 
-    urls = request.form.getlist("urls")  
-    files = request.files.getlist("files")  
+    """
+    Upload endpoint for:
+    - PDF files (multipart `files`)
+    - arXiv IDs/URLs (multipart `arxiv_ids`)
+    """
+    files = request.files.getlist("files")
+    arxiv_ids = request.form.getlist("arxiv_ids")
 
-    if not urls and not files:
-        return jsonify({"error": "No files or URLs provided"}), 400
+    if not files and not arxiv_ids:
+        return jsonify({"error": "Provide files and/or arxiv_ids"}), 400
 
-    saved_files = []
-    try:
-        # Save files before sending them to the vector database
-        for file in files:
-            if file.filename == "":
-                continue  # Skip empty files
+    results = []
 
-            file_path = os.path.join(app.config["UPLOAD_FOLDER"], file.filename)
-            file.save(file_path)
-            saved_files.append(file_path)
+    # 1) ingest uploaded PDFs
+    for file in files:
+        if not file or file.filename == "":
+            continue
+        if not file.filename.lower().endswith(".pdf"):
+            results.append({"source": file.filename, "status": "skipped", "reason": "Only PDF is supported"})
+            continue
 
-        # Process URLs and saved files
-        docs = urls + saved_files
-        vector_db.store_vectordb(docs)
+        save_path = os.path.join(app.config["UPLOAD_FOLDER"], file.filename)
+        file.save(save_path)
 
-        return jsonify({"message": "Data successfully added to vector database"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        try:
+            ingest_result = vector_db.store_pdf(save_path)
+            results.append({"source": file.filename, "status": "ok", **ingest_result})
+        except Exception as e:
+            results.append({"source": file.filename, "status": "error", "error": str(e)})
 
-# Adaptive RAG API
+    # 2) ingest arXiv IDs/URLs
+    for arxiv_ref in arxiv_ids:
+        try:
+            pdf_path = download_arxiv_pdf(arxiv_ref, target_dir=app.config["UPLOAD_FOLDER"])
+            ingest_result = vector_db.store_pdf(pdf_path)
+            results.append({"source": arxiv_ref, "status": "ok", **ingest_result})
+        except Exception as e:
+            results.append({"source": arxiv_ref, "status": "error", "error": str(e)})
+
+    return jsonify({"message": "Ingestion complete", "results": results}), 200
+
+
 @app.route("/ask", methods=["POST"])
 def ask():
-    data = request.get_json()
+    """
+    Ask questions grounded in uploaded papers.
+    Optional `paper_id` narrows retrieval to one paper.
+    """
+    data = request.get_json(silent=True) or {}
     question = data.get("question")
+    paper_id = data.get("paper_id")
 
     if not question:
         return jsonify({"error": "Missing question"}), 400
 
-    inputs = {"question": question}
-    response = None
+    inputs = {
+        "question": question,
+        "paper_id": paper_id,
+        "documents": [],
+        "generation": "",
+        "citations": [],
+    }
 
+    final = None
     for output in graph_app.stream(inputs):
-        for key, value in output.items():
-            print(f"Node '{key}': {value}")
-        response = value["generation"]  # Get final response
+        for _, value in output.items():
+            final = value
 
-    return jsonify({"question": question, "answer": response})  # Converts final response to JSON
+    if not final:
+        return jsonify({"error": "No response generated"}), 500
 
-# Delete document from Pinecone and JSON
+    return jsonify(
+        {
+            "question": question,
+            "paper_id": paper_id,
+            "answer": final.get("generation", ""),
+            "citations": final.get("citations", []),
+        }
+    )
+
+
 @app.route("/delete", methods=["POST"])
 def delete():
-    data = request.get_json()
-    doc_name = data.get("doc_name")
+    data = request.get_json(silent=True) or {}
+    paper_id = data.get("paper_id")
 
-    if not doc_name:
-        return jsonify({"error": "Missing document name"}), 400
+    if not paper_id:
+        return jsonify({"error": "Missing paper_id"}), 400
 
-    success = vector_db.delete_document_vectordb(doc_name)
-    if success:
-        return jsonify({"message": f"Deleted {doc_name} successfully"}), 200
-    else:
-        return jsonify({"error": f"File {doc_name} not found"}), 404
+    success = vector_db.delete_document_vectordb(paper_id)
+    if not success:
+        return jsonify({"error": f"paper_id '{paper_id}' not found"}), 404
+
+    return jsonify({"message": f"Deleted {paper_id} successfully"}), 200
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok", "service": "adaptive-multimodal-rag-backend"}), 200
+
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)  # Start Flask server accessible on any network
+    app.run(host="0.0.0.0", port=5000, debug=True)
