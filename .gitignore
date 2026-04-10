@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Node
+node_modules/
+
+# Build outputs
+build/
