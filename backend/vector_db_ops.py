@@ -6,21 +6,22 @@ import requests
 from typing import Any, Dict, List, Optional, Tuple
 
 import fitz  # PyMuPDF
+from PIL import Image
 import weaviate
 from weaviate.classes.config import Configure, DataType, Property
 from weaviate.classes.query import Filter, MetadataQuery
-
-from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
+
+from multimodal_models import MultiModalEmbedder
 
 
 class VectorDB:
-    """Weaviate-backed multi-vector storage for multimodal arXiv papers."""
+    """Weaviate multi-vector store for multimodal arXiv paper retrieval with late interaction."""
 
     def __init__(self, db_file: str = "db.json"):
         self.db_file = db_file
-        self.collection_name = os.getenv("WEAVIATE_COLLECTION", "PaperChunk")
-        self.embedding_model = OpenAIEmbeddings(model=os.getenv("EMBED_MODEL", "text-embedding-3-large"))
+        self.collection_name = os.getenv("WEAVIATE_COLLECTION", "PaperMultiVector")
+        self.embedder = MultiModalEmbedder(os.getenv("MM_EMBED_MODEL", "sentence-transformers/clip-ViT-B-32"))
 
         self.client = weaviate.connect_to_local(
             host=os.getenv("WEAVIATE_HOST", "localhost"),
@@ -38,17 +39,15 @@ class VectorDB:
                 properties=[
                     Property(name="paper_id", data_type=DataType.TEXT),
                     Property(name="source_name", data_type=DataType.TEXT),
+                    Property(name="doc_id", data_type=DataType.TEXT),
+                    Property(name="subvector_id", data_type=DataType.TEXT),
                     Property(name="modality", data_type=DataType.TEXT),
-                    Property(name="vector_type", data_type=DataType.TEXT),
                     Property(name="page", data_type=DataType.INT),
-                    Property(name="chunk_id", data_type=DataType.TEXT),
                     Property(name="content", data_type=DataType.TEXT),
                     Property(name="reference", data_type=DataType.TEXT),
+                    Property(name="image_path", data_type=DataType.TEXT),
                 ],
             )
-
-    def close(self) -> None:
-        self.client.close()
 
     def load_db(self) -> Dict[str, Any]:
         if os.path.exists(self.db_file):
@@ -65,202 +64,203 @@ class VectorDB:
         db[paper_id] = {"ids": object_ids}
         self.save_db(db)
 
-    def _safe_paper_id(self, source_name: str) -> str:
-        base = os.path.basename(source_name)
-        paper_id = os.path.splitext(base)[0]
-        return re.sub(r"[^a-zA-Z0-9_.-]", "_", paper_id)
+    def _safe_id(self, raw: str) -> str:
+        return re.sub(r"[^a-zA-Z0-9_.-]", "_", raw)
 
-    def _keyword_projection(self, text: str, max_tokens: int = 32) -> str:
-        words = re.findall(r"[A-Za-z0-9\-]+", text.lower())
-        seen = set()
-        deduped = []
-        for w in words:
-            if w not in seen and len(w) > 2:
-                seen.add(w)
-                deduped.append(w)
-            if len(deduped) >= max_tokens:
-                break
-        return " ".join(deduped)
-
-    def _split_text(self, text: str, chunk_size: int = 1200, overlap: int = 200) -> List[str]:
-        text = re.sub(r"\s+", " ", text).strip()
+    def _split_text(self, text: str, chunk_size: int = 1400, overlap: int = 250) -> List[str]:
+        text = re.sub(r"\s+", " ", (text or "")).strip()
         if not text:
             return []
-
         chunks: List[str] = []
-        start = 0
-        while start < len(text):
-            end = min(len(text), start + chunk_size)
-            chunks.append(text[start:end])
-            if end == len(text):
+        i = 0
+        while i < len(text):
+            j = min(len(text), i + chunk_size)
+            chunks.append(text[i:j])
+            if j >= len(text):
                 break
-            start = max(0, end - overlap)
+            i = max(0, j - overlap)
         return chunks
 
-    def _extract_pdf_multimodal(self, pdf_path: str) -> List[Dict[str, Any]]:
-        """
-        Extract text, table text (when detectable), and image placeholders from PDF.
-        - text modality: paragraph chunks
-        - table modality: extracted table rows as text
-        - image modality: image metadata placeholders
-        """
-        extracted: List[Dict[str, Any]] = []
+    def _extract_pdf_multimodal(self, pdf_path: str, image_dir: str = "uploads/images") -> List[Dict[str, Any]]:
+        os.makedirs(image_dir, exist_ok=True)
         doc = fitz.open(pdf_path)
+        out: List[Dict[str, Any]] = []
+        base = self._safe_id(os.path.splitext(os.path.basename(pdf_path))[0])
 
         try:
-            for page_idx in range(len(doc)):
-                page = doc[page_idx]
-                page_number = page_idx + 1
+            for pidx in range(len(doc)):
+                page = doc[pidx]
+                page_num = pidx + 1
 
-                # 1) text chunks
-                page_text = page.get_text("text") or ""
+                # text
+                page_text = page.get_text("text")
                 for chunk in self._split_text(page_text):
-                    extracted.append(
+                    out.append(
                         {
                             "modality": "text",
-                            "page": page_number,
+                            "page": page_num,
                             "content": chunk,
+                            "image_path": "",
                         }
                     )
 
-                # 2) table chunks (PyMuPDF table detection, if available)
+                # tables (as textual rows)
                 try:
                     tables = page.find_tables()
-                    for t_idx, table in enumerate(tables.tables):
+                    for tidx, table in enumerate(tables.tables):
                         rows = table.extract() or []
-                        table_text_rows = [" | ".join([c or "" for c in row]) for row in rows]
-                        table_text = "\n".join(table_text_rows).strip()
+                        rows_txt = [" | ".join([(c or "") for c in r]) for r in rows]
+                        table_text = "\n".join(rows_txt).strip()
                         if table_text:
-                            extracted.append(
+                            out.append(
                                 {
                                     "modality": "table",
-                                    "page": page_number,
-                                    "content": f"Table {t_idx + 1} (page {page_number}):\n{table_text}",
+                                    "page": page_num,
+                                    "content": f"Table {tidx + 1} on page {page_num}:\n{table_text}",
+                                    "image_path": "",
                                 }
                             )
                 except Exception:
-                    # keep robust if table detector isn't available in installed pymupdf build
                     pass
 
-                # 3) image placeholders (no OCR/captioning in this backend-only iteration)
+                # images (extract raw image bytes and store path)
                 images = page.get_images(full=True)
-                for i_idx, _ in enumerate(images):
-                    extracted.append(
+                for iidx, img in enumerate(images):
+                    xref = img[0]
+                    pix = fitz.Pixmap(doc, xref)
+                    if pix.n - pix.alpha > 3:
+                        pix = fitz.Pixmap(fitz.csRGB, pix)
+                    image_path = os.path.join(image_dir, f"{base}_p{page_num}_img{iidx+1}.png")
+                    pix.save(image_path)
+                    out.append(
                         {
                             "modality": "image",
-                            "page": page_number,
-                            "content": f"Image {i_idx + 1} on page {page_number}. Visual content placeholder.",
+                            "page": page_num,
+                            "content": f"Figure {iidx + 1} on page {page_num}",
+                            "image_path": image_path,
                         }
                     )
         finally:
             doc.close()
 
-        return extracted
+        return out
 
-    def _build_vectors(self, content: str) -> List[Tuple[str, str, List[float]]]:
-        """
-        Multi-vector representation for one chunk:
-        - semantic: original chunk text
-        - keyword: compact keyword projection for lexical/term-centric matching
-        """
-        semantic = content
-        keyword = self._keyword_projection(content)
+    def _vectors_for_item(self, item: Dict[str, Any]) -> List[List[float]]:
+        if item["modality"] == "image" and item.get("image_path"):
+            image = Image.open(item["image_path"]).convert("RGB")
+            return self.embedder.embed_image_multi(image, grid=2)
 
-        semantic_vec = self.embedding_model.embed_query(semantic)
-        keyword_vec = self.embedding_model.embed_query(keyword if keyword else semantic[:300])
-
-        return [
-            ("semantic", semantic, semantic_vec),
-            ("keyword", keyword if keyword else semantic, keyword_vec),
-        ]
+        # text/table multimodal vectors
+        return self.embedder.embed_text_multi(item["content"])
 
     def store_pdf(self, pdf_path: str, paper_id: Optional[str] = None) -> Dict[str, Any]:
         if not os.path.exists(pdf_path):
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
-        paper_id = paper_id or self._safe_paper_id(pdf_path)
+        paper_id = paper_id or os.path.splitext(os.path.basename(pdf_path))[0]
         items = self._extract_pdf_multimodal(pdf_path)
-        if not items:
-            return {"paper_id": paper_id, "chunks": 0, "vectors": 0}
-
         collection = self.client.collections.get(self.collection_name)
-        inserted_ids: List[str] = []
-        vector_count = 0
+
+        object_ids: List[str] = []
+        doc_count = 0
+        subvector_count = 0
 
         with collection.batch.dynamic() as batch:
             for item in items:
-                chunk_id = str(uuid.uuid4())
+                doc_count += 1
+                doc_id = str(uuid.uuid4())
                 reference = f"{paper_id} p.{item['page']} [{item['modality']}]"
+                vectors = self._vectors_for_item(item)
 
-                for vector_type, projection_text, vector in self._build_vectors(item["content"]):
-                    object_id = str(uuid.uuid4())
+                for vidx, vec in enumerate(vectors):
+                    oid = str(uuid.uuid4())
                     batch.add_object(
-                        uuid=object_id,
+                        uuid=oid,
                         properties={
                             "paper_id": paper_id,
                             "source_name": os.path.basename(pdf_path),
+                            "doc_id": doc_id,
+                            "subvector_id": f"{doc_id}:{vidx}",
                             "modality": item["modality"],
-                            "vector_type": vector_type,
                             "page": item["page"],
-                            "chunk_id": chunk_id,
-                            "content": projection_text,
+                            "content": item["content"],
                             "reference": reference,
+                            "image_path": item.get("image_path", ""),
                         },
-                        vector=vector,
+                        vector=vec,
                     )
-                    inserted_ids.append(object_id)
-                    vector_count += 1
+                    object_ids.append(oid)
+                    subvector_count += 1
 
-        self.add_document_db(paper_id, inserted_ids)
-        return {"paper_id": paper_id, "chunks": len(items), "vectors": vector_count}
+        self.add_document_db(paper_id, object_ids)
+        return {
+            "paper_id": paper_id,
+            "doc_units": doc_count,
+            "subvectors": subvector_count,
+        }
 
-    def search(self, question: str, paper_id: Optional[str] = None, top_k: int = 6) -> List[Document]:
+    def search(self, question: str, paper_id: Optional[str] = None, top_k: int = 8) -> List[Document]:
+        """
+        Late-interaction style retrieval approximation:
+        1) Produce multiple query token vectors.
+        2) For each query vector, retrieve nearest subvectors from Weaviate.
+        3) Aggregate by doc_id using MaxSim over query token hits.
+        """
         collection = self.client.collections.get(self.collection_name)
+        qvectors = self.embedder.embed_query_multi(question)
+        if not qvectors:
+            return []
 
-        semantic_vec = self.embedding_model.embed_query(question)
-        keyword_vec = self.embedding_model.embed_query(self._keyword_projection(question) or question)
+        where_filter = Filter.by_property("paper_id").equal(paper_id) if paper_id else None
 
-        where_filter = None
-        if paper_id:
-            where_filter = Filter.by_property("paper_id").equal(paper_id)
+        # doc_id -> token -> best similarity, plus representative metadata
+        scores: Dict[str, Dict[str, Any]] = {}
 
-        semantic_hits = collection.query.near_vector(
-            near_vector=semantic_vec,
-            limit=top_k,
-            filters=where_filter,
-            return_metadata=MetadataQuery(distance=True),
-        )
-        keyword_hits = collection.query.near_vector(
-            near_vector=keyword_vec,
-            limit=top_k,
-            filters=where_filter,
-            return_metadata=MetadataQuery(distance=True),
-        )
-
-        # Fuse by chunk_id with best (lowest) distance
-        fused: Dict[str, Dict[str, Any]] = {}
-        for resp in [semantic_hits, keyword_hits]:
+        for qv in qvectors:
+            resp = collection.query.near_vector(
+                near_vector=qv.vector,
+                limit=max(12, top_k * 2),
+                filters=where_filter,
+                return_metadata=MetadataQuery(distance=True),
+            )
             for obj in resp.objects:
                 props = obj.properties
-                chunk_key = props["chunk_id"]
-                dist = obj.metadata.distance if obj.metadata and obj.metadata.distance is not None else 1.0
-                if chunk_key not in fused or dist < fused[chunk_key]["distance"]:
-                    fused[chunk_key] = {
-                        "distance": dist,
+                doc_id = props["doc_id"]
+                distance = obj.metadata.distance if obj.metadata and obj.metadata.distance is not None else 1.0
+                similarity = max(0.0, 1.0 - float(distance))
+
+                if doc_id not in scores:
+                    scores[doc_id] = {
+                        "token_sims": {},
                         "content": props["content"],
                         "metadata": {
                             "paper_id": props["paper_id"],
                             "source_name": props["source_name"],
                             "modality": props["modality"],
-                            "vector_type": props["vector_type"],
                             "page": props["page"],
-                            "chunk_id": props["chunk_id"],
                             "reference": props["reference"],
+                            "image_path": props.get("image_path", ""),
                         },
                     }
 
-        ranked = sorted(fused.values(), key=lambda x: x["distance"])[:top_k]
-        return [Document(page_content=r["content"], metadata=r["metadata"]) for r in ranked]
+                prev = scores[doc_id]["token_sims"].get(qv.token, 0.0)
+                if similarity > prev:
+                    scores[doc_id]["token_sims"][qv.token] = similarity
+
+        ranked = []
+        for doc_id, record in scores.items():
+            token_values = list(record["token_sims"].values())
+            # MaxSim aggregate (sum of best similarities per query token)
+            score = sum(token_values) / max(1, len(qvectors))
+            ranked.append((score, record))
+
+        ranked.sort(key=lambda x: x[0], reverse=True)
+        top = ranked[:top_k]
+
+        return [
+            Document(page_content=r["content"], metadata={**r["metadata"], "late_interaction_score": s})
+            for s, r in top
+        ]
 
     def delete_document_vectordb(self, paper_id: str) -> bool:
         db = self.load_db()
@@ -269,9 +269,9 @@ class VectorDB:
 
         ids = db[paper_id]["ids"]
         collection = self.client.collections.get(self.collection_name)
-        for object_id in ids:
+        for oid in ids:
             try:
-                collection.data.delete_by_id(object_id)
+                collection.data.delete_by_id(oid)
             except Exception:
                 pass
 
@@ -283,17 +283,16 @@ class VectorDB:
 def download_arxiv_pdf(arxiv_id_or_url: str, target_dir: str = "uploads") -> str:
     os.makedirs(target_dir, exist_ok=True)
 
-    arxiv_id = arxiv_id_or_url.strip()
-    if "arxiv.org" in arxiv_id:
-        arxiv_id = arxiv_id.rstrip("/").split("/")[-1]
-    arxiv_id = arxiv_id.replace(".pdf", "")
+    raw = arxiv_id_or_url.strip()
+    if "arxiv.org" in raw:
+        raw = raw.rstrip("/").split("/")[-1]
+    arxiv_id = raw.replace(".pdf", "")
 
     pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
-    response = requests.get(pdf_url, timeout=30)
+    response = requests.get(pdf_url, timeout=40)
     response.raise_for_status()
 
     output_path = os.path.join(target_dir, f"{arxiv_id}.pdf")
     with open(output_path, "wb") as f:
         f.write(response.content)
-
     return output_path

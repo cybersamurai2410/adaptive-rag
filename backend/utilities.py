@@ -6,15 +6,12 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.tools.tavily_search import TavilySearchResults
 
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+# Multimodal-capable LLM for synthesis/grounding checks
+llm = ChatOpenAI(model="gpt-4o", temperature=0)
 
 
 class RouteQuery(BaseModel):
-    """Route question to paper RAG or web search."""
-
-    datasource: Literal["paper_rag", "web_search"] = Field(
-        ..., description="Route to paper_rag when question is about uploaded paper(s), otherwise web_search."
-    )
+    datasource: Literal["paper_rag", "web_search"] = Field(...)
 
 
 question_router = (
@@ -22,8 +19,8 @@ question_router = (
         [
             (
                 "system",
-                "You are a routing agent. If the user asks about uploaded arXiv papers, methods, tables, figures,"
-                " or citations from those papers, route to paper_rag. For current events or outside knowledge, route to web_search.",
+                "Route to paper_rag for questions about uploaded/arXiv papers, figures, tables, methods, or references. "
+                "Route to web_search only for out-of-corpus questions.",
             ),
             ("human", "{question}"),
         ]
@@ -33,17 +30,13 @@ question_router = (
 
 
 class GradeDocuments(BaseModel):
-    binary_score: Literal["yes", "no"] = Field(description="Whether document is relevant to question")
+    binary_score: Literal["yes", "no"] = Field(...)
 
 
 retrieval_grader = (
     ChatPromptTemplate.from_messages(
         [
-            (
-                "system",
-                "Grade whether the retrieved evidence is relevant to the question. "
-                "Answer only with yes or no.",
-            ),
+            ("system", "Grade relevance of evidence to question. Return yes or no."),
             ("human", "Question:\n{question}\n\nEvidence:\n{document}"),
         ]
     )
@@ -52,13 +45,13 @@ retrieval_grader = (
 
 
 class GradeHallucinations(BaseModel):
-    binary_score: Literal["yes", "no"] = Field(description="Whether answer is grounded in evidence")
+    binary_score: Literal["yes", "no"] = Field(...)
 
 
 hallucination_grader = (
     ChatPromptTemplate.from_messages(
         [
-            ("system", "Decide if answer is grounded in provided evidence. Return yes or no."),
+            ("system", "Is the answer grounded in evidence? Return yes or no."),
             ("human", "Evidence:\n{documents}\n\nAnswer:\n{generation}"),
         ]
     )
@@ -67,13 +60,13 @@ hallucination_grader = (
 
 
 class GradeAnswer(BaseModel):
-    binary_score: Literal["yes", "no"] = Field(description="Whether answer addresses the question")
+    binary_score: Literal["yes", "no"] = Field(...)
 
 
 answer_grader = (
     ChatPromptTemplate.from_messages(
         [
-            ("system", "Decide if answer addresses the user question. Return yes or no."),
+            ("system", "Does answer resolve question? Return yes or no."),
             ("human", "Question:\n{question}\n\nAnswer:\n{generation}"),
         ]
     )
@@ -86,7 +79,7 @@ question_rewriter = (
         [
             (
                 "system",
-                "Rewrite the question to improve scholarly retrieval over paper text, tables, and figures.",
+                "Rewrite for better multimodal retrieval across paper text, figures, and tables.",
             ),
             ("human", "Original question:\n{question}"),
         ]
@@ -100,26 +93,27 @@ rag_prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "You are an academic assistant. Use only provided context. "
-            "If evidence is insufficient, say so clearly. "
-            "Include concise inline references like [source p.X modality].",
+            "You are a research assistant. Answer from provided evidence only. "
+            "Use references inline like [paper_id p.X modality]."
+            "If uncertain, say evidence is insufficient.",
         ),
         (
             "human",
-            "Question:\n{question}\n\nContext:\n{context}\n\n"
-            "Return a concise answer followed by a short 'References' list.",
+            "Question:\n{question}\n\nRetrieved Evidence:\n{context}\n\n"
+            "Provide:\n1) Direct answer\n2) Key evidence bullets\n3) References list",
         ),
     ]
 )
 
 rag_chain = rag_prompt | llm | StrOutputParser()
-
 web_search_tool = TavilySearchResults(k=3)
 
 
 def format_docs_for_prompt(docs: List) -> str:
-    rows = []
+    blocks = []
     for i, d in enumerate(docs, start=1):
         ref = d.metadata.get("reference", "unknown")
-        rows.append(f"[{i}] {ref}\n{d.page_content}")
-    return "\n\n".join(rows)
+        score = d.metadata.get("late_interaction_score")
+        score_str = f"score={score:.3f}" if isinstance(score, (float, int)) else "score=n/a"
+        blocks.append(f"[{i}] {ref} ({score_str})\n{d.page_content}")
+    return "\n\n".join(blocks)
