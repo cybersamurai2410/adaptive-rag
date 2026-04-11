@@ -23,7 +23,7 @@ The backend pipeline:
 
 ## How multimodal multi-vector embeddings work in this project
 
-### 1) Multimodal extraction (document decomposition)
+### 1) Multimodal extraction 
 For each PDF page the backend builds doc units:
 - **Text units**: page text split into overlapping chunks.
 - **Table units**: table rows serialized as textual grids.
@@ -32,13 +32,13 @@ For each PDF page the backend builds doc units:
 Each unit gets metadata:
 - `paper_id`, `doc_id`, `modality`, `page`, `reference`, `subvector_id`.
 
-### 2) Embedding backend (ColPali-first)
+### 2) Embedding layer (CoPali)
 The embedding layer uses:
 - `COLPALI_MODEL=vidore/colpali-v1.2` (default)
 
 ColPali produces **multiple vectors per input** (token/patch-level style representation) instead of a single pooled vector.
 
-### 3) What “multi-vector” means here
+### 3) Multi-vector explained
 Instead of one vector per doc chunk, each doc unit stores:
 - `v_1, v_2, ..., v_n` subvectors
 - each subvector is stored in Weaviate as a separate object with shared `doc_id`
