@@ -12,3 +12,6 @@ langchain-openai
 langchain-community
 pydantic
 sentence-transformers
+torch
+transformers
+colpali-engine

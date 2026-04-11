@@ -55,5 +55,12 @@ curl -X POST http://127.0.0.1:5000/delete \
 
 
 ## Model Configuration
-- `CHAT_MODEL` (default: `gpt-5-mini`) for routing, grading, and generation.
-- `MM_EMBED_MODEL` (default: `sentence-transformers/clip-ViT-B-32`) for multimodal embeddings.
+- `CHAT_MODEL` is fixed to `gpt-5` for routing, grading, and generation.
+- `MM_BACKEND` (default: `colpali`) chooses multimodal embedder backend (`colpali` or `clip` fallback).
+- `MM_EMBED_MODEL` (default: `vidore/colpali-v1.2`) sets the multimodal embedding model.
+
+
+### Inspect multivector layout
+```bash
+curl http://127.0.0.1:5000/debug/multivector/2403.14403
+```

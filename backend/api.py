@@ -117,6 +117,15 @@ def delete():
     return jsonify({"message": f"Deleted {paper_id} successfully"}), 200
 
 
+@app.route("/debug/multivector/<paper_id>", methods=["GET"])
+def debug_multivector(paper_id):
+    try:
+        payload = vector_db.inspect_multivector(paper_id)
+        return jsonify(payload), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "service": "adaptive-multimodal-rag-backend"}), 200

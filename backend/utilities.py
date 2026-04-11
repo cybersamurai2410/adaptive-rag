@@ -8,7 +8,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_community.tools.tavily_search import TavilySearchResults
 
 # Configurable LLM (default GPT-5 family)
-CHAT_MODEL = os.getenv("CHAT_MODEL", "gpt-5-mini")
+CHAT_MODEL = "gpt-5"
 llm = ChatOpenAI(model=CHAT_MODEL, temperature=0)
 
 

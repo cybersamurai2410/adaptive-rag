@@ -28,7 +28,10 @@ class VectorDB:
     def __init__(self, db_file: str = "db.json"):
         self.db_file = db_file
         self.collection_name = os.getenv("WEAVIATE_COLLECTION", "PaperMultiVector")
-        self.embedder = MultiModalEmbedder(os.getenv("MM_EMBED_MODEL", "sentence-transformers/clip-ViT-B-32"))
+        self.embedder = MultiModalEmbedder(
+            backend=os.getenv("MM_BACKEND", "colpali"),
+            model_name=os.getenv("MM_EMBED_MODEL", "vidore/colpali-v1.2"),
+        )
 
         self.client = weaviate.connect_to_local(
             host=os.getenv("WEAVIATE_HOST", "localhost"),
@@ -275,6 +278,44 @@ class VectorDB:
             )
             for score, item in top
         ]
+
+    def inspect_multivector(self, paper_id: str, max_docs: int = 5) -> Dict[str, Any]:
+        """Return a compact view of how multivectors are stored for a paper."""
+        collection = self.client.collections.get(self.collection_name)
+        objs = collection.query.fetch_objects(
+            filters=Filter.by_property("paper_id").equal(paper_id),
+            limit=5000,
+        )
+
+        by_doc: Dict[str, Dict[str, Any]] = {}
+        for obj in objs.objects:
+            p = obj.properties
+            doc_id = p["doc_id"]
+            d = by_doc.setdefault(
+                doc_id,
+                {
+                    "doc_id": doc_id,
+                    "reference": p.get("reference"),
+                    "modality": p.get("modality"),
+                    "subvector_count": 0,
+                    "vector_dim": 0,
+                },
+            )
+            d["subvector_count"] += 1
+            if d["vector_dim"] == 0:
+                try:
+                    d["vector_dim"] = len(json.loads(p["embedding_json"]))
+                except Exception:
+                    d["vector_dim"] = 0
+
+        sample = list(by_doc.values())[:max_docs]
+        total_subvectors = sum(v["subvector_count"] for v in by_doc.values())
+        return {
+            "paper_id": paper_id,
+            "doc_units": len(by_doc),
+            "total_subvectors": total_subvectors,
+            "samples": sample,
+        }
 
     def delete_document_vectordb(self, paper_id: str) -> bool:
         db = self.load_db()
