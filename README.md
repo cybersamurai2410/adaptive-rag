@@ -5,6 +5,11 @@ This project implements an adaptive RAG application with:
 - **Backend API** (`backend/`) using **LangGraph + LangChain**
 - **Weaviate** for multi-vector storage/retrieval over multimodal paper chunks
 
+## Architecture
+![Adaptive Multimodal RAG Architecture](https://github.com/user-attachments/assets/7af982c9-3ac0-46d0-902f-13a2778c9e30)
+![Adaptive RAG Graph Flow](https://github.com/user-attachments/assets/a1d09c7e-103e-4e22-aaea-1bce706b06a7)
+
+
 ## Backend focus (current)
 The backend now targets the CV-aligned flow:
 1. Ingest research papers from:
