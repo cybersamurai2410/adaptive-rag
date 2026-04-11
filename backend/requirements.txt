@@ -1,0 +1,17 @@
+flask
+flask-cors
+python-dotenv
+requests
+pymupdf
+Pillow
+numpy
+weaviate-client
+langchain
+langgraph
+langchain-openai
+langchain-community
+pydantic
+sentence-transformers
+torch
+transformers
+colpali-engine
