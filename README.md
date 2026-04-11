@@ -1,6 +1,6 @@
 # Adaptive Multimodal RAG with Query Analysis and Self-Reflection
 
-This project implements an adaptive RAG application with:
+This project implements an adaptive multimodal RAG application with:
 - **Frontend UI** (`frontend/`)
 - **Backend API** (`backend/`) using **LangGraph + LangChain**
 - **Weaviate** for multi-vector storage/retrieval over multimodal paper chunks
@@ -9,8 +9,8 @@ This project implements an adaptive RAG application with:
 ![Adaptive Multimodal RAG Architecture](https://github.com/user-attachments/assets/7af982c9-3ac0-46d0-902f-13a2778c9e30)
 ![Adaptive RAG Graph Flow](https://github.com/user-attachments/assets/a1d09c7e-103e-4e22-aaea-1bce706b06a7)
 
-## Backend focus (current)
-The backend targets the CV-aligned flow:
+## Backend overview
+The backend pipeline:
 1. Ingest research papers from uploaded PDFs or arXiv IDs/URLs.
 2. Extract multimodal paper content (text, tables, images).
 3. Convert each modality into **multi-vector embeddings**.
@@ -133,6 +133,85 @@ curl -X POST http://127.0.0.1:5000/ask \
 curl -X POST http://127.0.0.1:5000/delete \
   -H "Content-Type: application/json" \
   -d '{"paper_id": "2403.14403"}'
+```
+
+
+## Example Inputs and Outputs
+
+### 1) Upload paper(s)
+**Input**
+```bash
+curl -X POST http://127.0.0.1:5000/upload \
+  -F "files=@/path/to/paper.pdf" \
+  -F "arxiv_ids=2403.14403"
+```
+
+**Example Output**
+```json
+{
+  "message": "Ingestion complete",
+  "results": [
+    {
+      "source": "paper.pdf",
+      "status": "ok",
+      "paper_id": "paper",
+      "doc_units": 186,
+      "subvectors": 1398
+    },
+    {
+      "source": "2403.14403",
+      "status": "ok",
+      "paper_id": "2403.14403",
+      "doc_units": 224,
+      "subvectors": 1712
+    }
+  ]
+}
+```
+
+### 2) Ask grounded question
+**Input**
+```bash
+curl -X POST http://127.0.0.1:5000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What is the routing strategy?","paper_id":"2403.14403"}'
+```
+
+**Example Output**
+```json
+{
+  "question": "What is the routing strategy?",
+  "paper_id": "2403.14403",
+  "answer": "The method first classifies query complexity and routes to the most suitable retrieval/generation path ...",
+  "citations": [
+    "2403.14403 p.3 [text]",
+    "2403.14403 p.5 [table]"
+  ]
+}
+```
+
+### 3) Inspect multivector layout
+**Input**
+```bash
+curl http://127.0.0.1:5000/debug/multivector/2403.14403
+```
+
+**Example Output**
+```json
+{
+  "paper_id": "2403.14403",
+  "doc_units": 224,
+  "total_subvectors": 1712,
+  "samples": [
+    {
+      "doc_id": "6f...",
+      "reference": "2403.14403 p.3 [text]",
+      "modality": "text",
+      "subvector_count": 7,
+      "vector_dim": 128
+    }
+  ]
+}
 ```
 
 ## Model Configuration
