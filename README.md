@@ -1,5 +1,7 @@
 # Adaptive Multimodal RAG with Query Analysis and Self-Reflection
 
+Developed web application with front-end UI and back-end API using advanced adaptive multimodal RAG architecture with query analysis and self-reflection to route LLM calls through multi-vector retrieval over research paper content.
+
 This project implements an adaptive multimodal RAG application with:
 - **Frontend UI** (`frontend/`)
 - **Backend API** (`backend/`) using **LangGraph + LangChain**
@@ -32,12 +34,9 @@ Each unit gets metadata:
 
 ### 2) Embedding backend (ColPali-first)
 The embedding layer uses:
-- `MM_BACKEND=colpali` (default)
-- `MM_EMBED_MODEL=vidore/colpali-v1.2` (default)
+- `COLPALI_MODEL=vidore/colpali-v1.2` (default)
 
 ColPali produces **multiple vectors per input** (token/patch-level style representation) instead of a single pooled vector.
-
-Fallback exists (`MM_BACKEND=clip`) but default path is ColPali-first.
 
 ### 3) What “multi-vector” means here
 Instead of one vector per doc chunk, each doc unit stores:
@@ -216,5 +215,4 @@ curl http://127.0.0.1:5000/debug/multivector/2403.14403
 
 ## Model Configuration
 - `CHAT_MODEL` is fixed to `gpt-5` for routing, grading, and generation.
-- `MM_BACKEND` (default: `colpali`) chooses multimodal embedder backend (`colpali` or `clip` fallback).
-- `MM_EMBED_MODEL` (default: `vidore/colpali-v1.2`) sets the multimodal embedding model.
+- `COLPALI_MODEL` (default: `vidore/colpali-v1.2`) sets the ColPali multimodal embedding model.

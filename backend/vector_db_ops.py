@@ -29,8 +29,7 @@ class VectorDB:
         self.db_file = db_file
         self.collection_name = os.getenv("WEAVIATE_COLLECTION", "PaperMultiVector")
         self.embedder = MultiModalEmbedder(
-            backend=os.getenv("MM_BACKEND", "colpali"),
-            model_name=os.getenv("MM_EMBED_MODEL", "vidore/colpali-v1.2"),
+            model_name=os.getenv("COLPALI_MODEL", "vidore/colpali-v1.2"),
         )
 
         self.client = weaviate.connect_to_local(
