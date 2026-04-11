@@ -9,15 +9,97 @@ This project implements an adaptive RAG application with:
 ![Adaptive Multimodal RAG Architecture](https://github.com/user-attachments/assets/7af982c9-3ac0-46d0-902f-13a2778c9e30)
 ![Adaptive RAG Graph Flow](https://github.com/user-attachments/assets/a1d09c7e-103e-4e22-aaea-1bce706b06a7)
 
-
 ## Backend focus (current)
-The backend now targets the CV-aligned flow:
-1. Ingest research papers from:
-   - uploaded PDF files, or
-   - arXiv IDs/URLs (downloaded as PDF from arXiv)
-2. Extract multimodal content (text, tables, and real extracted images) from PDF.
-3. Build multi-vector representations using a shared CLIP embedding space across text and image patches.
-4. Retrieve relevant evidence and generate grounded answers with references.
+The backend targets the CV-aligned flow:
+1. Ingest research papers from uploaded PDFs or arXiv IDs/URLs.
+2. Extract multimodal paper content (text, tables, images).
+3. Convert each modality into **multi-vector embeddings**.
+4. Retrieve with ANN + MaxSim reranking.
+5. Run adaptive RAG graph with routing, grading, rewrite loop, and grounded answer generation with references.
+
+---
+
+## How multimodal multi-vector embeddings work in this project
+
+### 1) Multimodal extraction (document decomposition)
+For each PDF page the backend builds doc units:
+- **Text units**: page text split into overlapping chunks.
+- **Table units**: table rows serialized as textual grids.
+- **Image units**: embedded images extracted from the PDF page.
+
+Each unit gets metadata:
+- `paper_id`, `doc_id`, `modality`, `page`, `reference`, `subvector_id`.
+
+### 2) Embedding backend (ColPali-first)
+The embedding layer uses:
+- `MM_BACKEND=colpali` (default)
+- `MM_EMBED_MODEL=vidore/colpali-v1.2` (default)
+
+ColPali produces **multiple vectors per input** (token/patch-level style representation) instead of a single pooled vector.
+
+Fallback exists (`MM_BACKEND=clip`) but default path is ColPali-first.
+
+### 3) What “multi-vector” means here
+Instead of one vector per doc chunk, each doc unit stores:
+- `v_1, v_2, ..., v_n` subvectors
+- each subvector is stored in Weaviate as a separate object with shared `doc_id`
+- raw subvector values are additionally persisted in `embedding_json` to support exact reranking
+
+So one doc unit can map to many vectors:
+- text/table → multiple token-like vectors
+- image → multiple visual vectors
+
+### 4) Two-stage retrieval
+#### Stage A: ANN candidate generation
+For each query subvector `q_i`, Weaviate ANN search retrieves nearest subvectors.
+Candidate doc units are unioned by `doc_id`.
+
+#### Stage B: Late interaction rerank (MaxSim)
+For each candidate doc unit with subvectors `{d_j}` and query vectors `{q_i}`:
+
+`score(doc) = mean_i ( max_j dot(q_i, d_j) )`
+
+This is the MaxSim-style late interaction used for final ranking.
+
+### 5) Inspecting stored multivectors
+You can inspect how vectors are actually stored:
+
+```bash
+curl http://127.0.0.1:5000/debug/multivector/2403.14403
+```
+
+Response includes:
+- number of doc units
+- total subvectors
+- per-unit sample with subvector count + vector dimension
+
+---
+
+## How adaptive RAG architecture works in this project
+
+The LangGraph workflow in `backend/graph_agents.py` runs as a state machine:
+
+1. **Route question** (`paper_rag` vs `web_search`)
+   - Router LLM chooses paper retrieval for paper-grounded queries.
+2. **Retrieve** from Weaviate
+   - Multi-vector retrieval over text/table/image units.
+3. **Grade evidence relevance**
+   - LLM filters weak/irrelevant retrievals.
+4. **Decision**
+   - If no relevant evidence: rewrite query.
+   - Else: generate answer.
+5. **Generate grounded answer**
+   - Uses retrieved context and produces references.
+6. **Self-reflection checks**
+   - Hallucination grader: is answer grounded in evidence?
+   - Answer grader: does answer resolve the question?
+7. **Loop control**
+   - If not grounded or not useful → transform query and retry.
+   - If useful → end.
+
+This creates an adaptive loop where retrieval quality and answer quality are actively checked before completion.
+
+---
 
 ## Repository Structure
 - `backend/` — Flask API, adaptive graph, Weaviate vector ops, arXiv ingestion.
@@ -53,14 +135,7 @@ curl -X POST http://127.0.0.1:5000/delete \
   -d '{"paper_id": "2403.14403"}'
 ```
 
-
 ## Model Configuration
 - `CHAT_MODEL` is fixed to `gpt-5` for routing, grading, and generation.
 - `MM_BACKEND` (default: `colpali`) chooses multimodal embedder backend (`colpali` or `clip` fallback).
 - `MM_EMBED_MODEL` (default: `vidore/colpali-v1.2`) sets the multimodal embedding model.
-
-
-### Inspect multivector layout
-```bash
-curl http://127.0.0.1:5000/debug/multivector/2403.14403
-```
