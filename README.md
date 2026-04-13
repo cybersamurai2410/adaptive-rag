@@ -23,7 +23,7 @@ The backend pipeline:
 
 ## How multimodal multi-vector embeddings work in this project
 
-### 1) Page-first processing (ColPali style)
+### 1) Page processing with ColPali
 For each PDF:
 - each page is rendered as a page image
 - each page image is encoded into multiple patch vectors
@@ -32,11 +32,11 @@ For each PDF:
 Each patch vector stores metadata:
 - `paper_id`, `page_id`, `page`, `patch_id`, `reference`.
 
-### 2) Embedding backend (ColPali-first)
+### 2) Embedding backend (ColPali)
 The embedding layer uses:
 - `COLPALI_MODEL=vidore/colpali-v1.2` (default)
 
-ColPali produces **multiple vectors per input** (token/patch-level style representation) instead of a single pooled vector.
+ColPali produces **multiple vectors per input** (token/patch-level representation) instead of a single pooled vector.
 
 ### 3) What “multi-vector” means here
 Instead of one vector per page, each page stores:
@@ -54,7 +54,7 @@ For each candidate page with patch vectors `{p_j}` and query vectors `{q_i}`:
 
 `score(page) = mean_i ( max_j dot(q_i, p_j) )`
 
-This is the MaxSim-style late interaction used for final ranking.
+This is the MaxSim late interaction used for final ranking.
 
 ### 5) Inspecting stored multivectors
 You can inspect how vectors are actually stored:

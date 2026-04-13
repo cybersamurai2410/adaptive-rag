@@ -17,7 +17,7 @@ from multimodal_models import MultiModalEmbedder
 
 class VectorDB:
     """
-    ColPali-style retrieval:
+    ColPali retrieval:
     - Each PDF page -> page image
     - Each page image -> multiple patch vectors
     - Query -> multiple vectors
