@@ -5,7 +5,7 @@ Developed web application with front-end UI and back-end API using advanced adap
 This project implements an adaptive multimodal RAG application with:
 - **Frontend UI** (`frontend/`)
 - **Backend API** (`backend/`) using **LangGraph + LangChain**
-- **Weaviate** for multi-vector storage/retrieval over multimodal paper chunks
+- **Weaviate** for multi-vector storage/retrieval over patch-level page embeddings
 
 ## Architecture
 ![Adaptive Multimodal RAG Architecture](https://github.com/user-attachments/assets/7af982c9-3ac0-46d0-902f-13a2778c9e30)
@@ -14,49 +14,45 @@ This project implements an adaptive multimodal RAG application with:
 ## Backend overview
 The backend pipeline:
 1. Ingest research papers from uploaded PDFs or arXiv IDs/URLs.
-2. Extract multimodal paper content (text, tables, images).
-3. Convert each modality into **multi-vector embeddings**.
-4. Retrieve with ANN + MaxSim reranking.
+2. Render each PDF page as an image and keep page text for final answer context.
+3. Convert each page image into **patch-level multi-vector embeddings**.
+4. Retrieve patch hits with ANN, group by page, and rerank pages with MaxSim.
 5. Run adaptive RAG graph with routing, grading, rewrite loop, and grounded answer generation with references.
 
 ---
 
 ## How multimodal multi-vector embeddings work in this project
 
-### 1) Multimodal extraction 
-For each PDF page the backend builds doc units:
-- **Text units**: page text split into overlapping chunks.
-- **Table units**: table rows serialized as textual grids.
-- **Image units**: embedded images extracted from the PDF page.
+### 1) Page-first processing (ColPali style)
+For each PDF:
+- each page is rendered as a page image
+- each page image is encoded into multiple patch vectors
+- page text is retained only as answer context (not for retrieval indexing)
 
-Each unit gets metadata:
-- `paper_id`, `doc_id`, `modality`, `page`, `reference`, `subvector_id`.
+Each patch vector stores metadata:
+- `paper_id`, `page_id`, `page`, `patch_id`, `reference`.
 
-### 2) Embedding layer (CoPali)
+### 2) Embedding backend (ColPali-first)
 The embedding layer uses:
 - `COLPALI_MODEL=vidore/colpali-v1.2` (default)
 
 ColPali produces **multiple vectors per input** (token/patch-level style representation) instead of a single pooled vector.
 
-### 3) Multi-vector explained
-Instead of one vector per doc chunk, each doc unit stores:
-- `v_1, v_2, ..., v_n` subvectors
-- each subvector is stored in Weaviate as a separate object with shared `doc_id`
-- raw subvector values are additionally persisted in `embedding_json` to support exact reranking
-
-So one doc unit can map to many vectors:
-- text/table → multiple token-like vectors
-- image → multiple visual vectors
+### 3) What “multi-vector” means here
+Instead of one vector per page, each page stores:
+- `v_1, v_2, ..., v_n` patch vectors
+- each patch vector is stored as a separate Weaviate object with shared `page_id`
+- raw vector values are additionally persisted in `embedding_json` for exact reranking
 
 ### 4) Two-stage retrieval
 #### Stage A: ANN candidate generation
-For each query subvector `q_i`, Weaviate ANN search retrieves nearest subvectors.
-Candidate doc units are unioned by `doc_id`.
+For each query vector `q_i`, Weaviate ANN retrieves nearest patch vectors.
+Candidate pages are produced by grouping matches on `page_id`.
 
 #### Stage B: Late interaction rerank (MaxSim)
-For each candidate doc unit with subvectors `{d_j}` and query vectors `{q_i}`:
+For each candidate page with patch vectors `{p_j}` and query vectors `{q_i}`:
 
-`score(doc) = mean_i ( max_j dot(q_i, d_j) )`
+`score(page) = mean_i ( max_j dot(q_i, p_j) )`
 
 This is the MaxSim-style late interaction used for final ranking.
 
@@ -68,9 +64,9 @@ curl http://127.0.0.1:5000/debug/multivector/2403.14403
 ```
 
 Response includes:
-- number of doc units
-- total subvectors
-- per-unit sample with subvector count + vector dimension
+- number of pages
+- total patch vectors
+- per-page sample with patch vector count + vector dimension
 
 ---
 
@@ -81,7 +77,7 @@ The LangGraph workflow in `backend/graph_agents.py` runs as a state machine:
 1. **Route question** (`paper_rag` vs `web_search`)
    - Router LLM chooses paper retrieval for paper-grounded queries.
 2. **Retrieve** from Weaviate
-   - Multi-vector retrieval over text/table/image units.
+   - Multi-vector retrieval over page patch vectors.
 3. **Grade evidence relevance**
    - LLM filters weak/irrelevant retrievals.
 4. **Decision**
@@ -154,15 +150,15 @@ curl -X POST http://127.0.0.1:5000/upload \
       "source": "paper.pdf",
       "status": "ok",
       "paper_id": "paper",
-      "doc_units": 186,
-      "subvectors": 1398
+      "pages": 186,
+      "patch_vectors": 1398
     },
     {
       "source": "2403.14403",
       "status": "ok",
       "paper_id": "2403.14403",
-      "doc_units": 224,
-      "subvectors": 1712
+      "pages": 224,
+      "patch_vectors": 1712
     }
   ]
 }
@@ -183,8 +179,8 @@ curl -X POST http://127.0.0.1:5000/ask \
   "paper_id": "2403.14403",
   "answer": "The method first classifies query complexity and routes to the most suitable retrieval/generation path ...",
   "citations": [
-    "2403.14403 p.3 [text]",
-    "2403.14403 p.5 [table]"
+    "2403.14403 p.3 [page]",
+    "2403.14403 p.5 [page]"
   ]
 }
 ```
@@ -199,14 +195,14 @@ curl http://127.0.0.1:5000/debug/multivector/2403.14403
 ```json
 {
   "paper_id": "2403.14403",
-  "doc_units": 224,
-  "total_subvectors": 1712,
+  "pages": 224,
+  "total_patch_vectors": 1712,
   "samples": [
     {
-      "doc_id": "6f...",
-      "reference": "2403.14403 p.3 [text]",
-      "modality": "text",
-      "subvector_count": 7,
+      "page_id": "2403.14403:p3",
+      "reference": "2403.14403 p.3 [page]",
+      "page": 3,
+      "patch_vectors": 128,
       "vector_dim": 128
     }
   ]
