@@ -11,39 +11,32 @@ This project implements an adaptive multimodal RAG application with:
 ![Adaptive Multimodal RAG Architecture](https://github.com/user-attachments/assets/7af982c9-3ac0-46d0-902f-13a2778c9e30)
 ![Adaptive RAG Graph Flow](https://github.com/user-attachments/assets/a1d09c7e-103e-4e22-aaea-1bce706b06a7)
 
-### Adaptive Multimodal Multi-Vector RAG Architecture (This Project)
+### Adaptive Multimodal Multi-Vector RAG Architecture
 ```mermaid
 flowchart TD
     U[User Question] --> API[/Flask API: /ask/]
-    API --> G{LangGraph Router
-paper_rag or web_search}
+    API --> G{"LangGraph Router: paper_rag or web_search"}
 
     subgraph Ingestion[Ingestion Pipeline]
-      PDF[PDF Upload/arXiv PDF] --> RENDER[Render each page to image]
-      RENDER --> COLPALI[ColPali image encoder
-multiple patch vectors per page]
-      COLPALI --> WV[(Weaviate
-patch-level vectors)]
-      PDF --> PTEXT[Extract page text
-for answer context]
+      PDF[PDF Upload / arXiv PDF] --> RENDER[Render each page to image]
+      RENDER --> COLPALI["ColPali image encoder (multiple patch vectors per page)"]
+      COLPALI --> WV[(Weaviate patch-level vectors)]
+      PDF --> PTEXT[Extract page text for answer context]
       PTEXT --> WV
     end
 
-    G -->|paper_rag| RETRIEVE[Patch ANN retrieval
-per query vector]
+    G -->|paper_rag| RETRIEVE[Patch ANN retrieval per query vector]
     G -->|web_search| WEB[Web Search Tool]
 
     RETRIEVE --> GROUP[Group hits by page_id]
-    GROUP --> MAXSIM[Late Interaction MaxSim
-score(page)=mean_i max_j dot(q_i,p_j)]
+    GROUP --> MAXSIM["Late Interaction MaxSim: score(page) = mean_i max_j dot(q_i, p_j)"]
     MAXSIM --> TOPK[Top-K pages]
 
     TOPK --> GRADE[Relevance Grader]
     GRADE --> DECIDE{Relevant evidence?}
     DECIDE -->|No| REWRITE[Question Rewriter]
     REWRITE --> RETRIEVE
-    DECIDE -->|Yes| GEN[Answer Generation
-with page citations]
+    DECIDE -->|Yes| GEN[Answer Generation with page citations]
 
     GEN --> HALLU[Faithfulness / Hallucination Check]
     HALLU --> ANSWERCHK[Answer Relevance Check]
