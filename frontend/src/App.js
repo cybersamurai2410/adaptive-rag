@@ -35,6 +35,7 @@ function App() {
   const [urlInput, setUrlInput] = useState("");
   const [processing, setProcessing] = useState(false);
   const [processMessage, setProcessMessage] = useState("");
+  const [uploadFeedback, setUploadFeedback] = useState("");
 
   const handleQuestionSubmit = async (e) => {
     e.preventDefault();
@@ -59,16 +60,28 @@ function App() {
 
   const handleFileUpload = (e) => {
     const files = Array.from(e.target.files);
-    // Allow only TXT and PDF files
-    const allowedTypes = ["text/plain", "application/pdf"];
-    const validFiles = files.filter((file) => allowedTypes.includes(file.type));
+    const validFiles = files.filter((file) => {
+      const hasPdfMimeType = file.type === "application/pdf";
+      const hasPdfExtension = file.name.toLowerCase().endsWith(".pdf");
+      return hasPdfMimeType || hasPdfExtension;
+    });
+    const rejectedFiles = files.filter((file) => !validFiles.includes(file));
 
     const fileItems = validFiles.map((file) => ({
       name: file.name,
       type: "file",
+      file,
     }));
 
     setUploads((prev) => [...prev, ...fileItems]);
+
+    if (rejectedFiles.length > 0) {
+      setUploadFeedback(
+        `Skipped ${rejectedFiles.length} file(s): PDF files only are supported.`
+      );
+    } else {
+      setUploadFeedback("");
+    }
   };
 
   const handleUrlAdd = () => {
@@ -96,7 +109,7 @@ const handleProcessData = async () => {
   uploads.forEach((item) => {
       if (item.type === "url") {
           formData.append("urls", item.name);
-      } else if (item.type === "file") {
+      } else if (item.type === "file" && item.file instanceof File) {
           formData.append("files", item.file);  // File object
       }
   });
@@ -152,14 +165,15 @@ const handleProcessData = async () => {
       <section className="upload-section">
         <h2>Upload Files or Add URLs</h2>
         <div className="file-upload">
-          <label htmlFor="fileInput">Upload TXT/PDF Files:</label>
+          <label htmlFor="fileInput">Upload PDF Files:</label>
           <input
             id="fileInput"
             type="file"
-            accept=".txt,.pdf"
+            accept=".pdf,application/pdf"
             onChange={handleFileUpload}
             multiple
           />
+          {uploadFeedback && <p className="process-message">{uploadFeedback}</p>}
         </div>
 
         <div className="url-upload">
