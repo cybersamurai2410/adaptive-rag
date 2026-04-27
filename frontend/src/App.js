@@ -1,5 +1,8 @@
 import React, { useMemo, useState } from "react";
 import "./App.css";
+import PaperPane from "./components/PaperPane";
+import ChatPane from "./components/ChatPane";
+import { askQuestion, uploadData } from "./api/client";
 
 const parseCitation = (citation, index) => {
   const raw = typeof citation === "string" ? citation.trim() : String(citation ?? "").trim();
@@ -103,8 +106,9 @@ function PaperPane({ activeCitation, activePage }) {
 
 function App() {
   const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState("");
   const [loading, setLoading] = useState(false);
+  const [chatHistory, setChatHistory] = useState([]);
+
   const [uploads, setUploads] = useState([]);
   const [urlInput, setUrlInput] = useState("");
   const [processing, setProcessing] = useState(false);
@@ -125,9 +129,14 @@ function App() {
     setActivePage(citation.page ?? null);
   };
 
+  const [selectedPaperIndex, setSelectedPaperIndex] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+
   const handleQuestionSubmit = async (e) => {
     e.preventDefault();
-    if (!question.trim()) return;
+    const trimmedQuestion = question.trim();
+    if (!trimmedQuestion) return;
+
     setLoading(true);
     setAnswer("");
     setRawCitations([]);
@@ -240,7 +249,7 @@ function App() {
   return (
     <div className="App">
       <header>
-        <h1>Ask a Question</h1>
+        <h1>Adaptive RAG Workspace</h1>
       </header>
 
       <section className="question-section">
