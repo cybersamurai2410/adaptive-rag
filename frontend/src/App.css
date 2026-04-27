@@ -48,7 +48,7 @@ body {
 
 /* Container */
 .App {
-  max-width: 700px;
+  max-width: 920px;
   margin: 40px auto;
   background: #fff;
   padding: 30px;
@@ -114,6 +114,73 @@ header h1 {
 
 .answer-section h2 {
   margin-top: 0;
+}
+
+.citations-section {
+  margin-top: 18px;
+}
+
+.citation-list {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+}
+
+.citation-chip {
+  border: 1px solid #91b4ff;
+  background: #f3f7ff;
+  color: #133f8a;
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.citation-chip:hover {
+  background: #dfeaff;
+}
+
+.citation-chip.active {
+  background: #1f5fcc;
+  border-color: #1f5fcc;
+  color: #fff;
+}
+
+.paper-pane {
+  margin: 20px 0 28px;
+  border: 1px solid #dbe3ef;
+  border-radius: 6px;
+  padding: 16px;
+  background: #fafcff;
+}
+
+.paper-pane h2 {
+  margin: 0;
+}
+
+.paper-pane-caption {
+  margin: 8px 0 10px;
+  color: #4b5a71;
+}
+
+.paper-preview {
+  border: 1px dashed #b8c7db;
+  border-radius: 6px;
+  padding: 12px;
+  background: #fff;
+}
+
+.paper-preview.highlighted {
+  border: 2px solid #ffbf47;
+  background: #fff8e7;
+}
+
+.page-jump-message {
+  margin-top: 10px;
+  color: #4d3a00;
 }
 
 /* Upload Section */
