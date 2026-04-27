@@ -84,14 +84,27 @@ function App() {
     }
   };
 
+  const isValidArxivInput = (input) => {
+    const trimmed = input.trim();
+    const arxivUrlPattern = /^(https?:\/\/)?(www\.)?arxiv\.org\/(abs|pdf)\/[a-zA-Z-]*\/?\d{4}\.\d{4,5}(v\d+)?(\.pdf)?$/i;
+    const arxivIdPattern = /^(?:[a-zA-Z-]+\/)?\d{4}\.\d{4,5}(v\d+)?$/;
+
+    return arxivUrlPattern.test(trimmed) || arxivIdPattern.test(trimmed);
+  };
+
   const handleUrlAdd = () => {
-    if (urlInput.trim() !== "") {
-      setUploads((prev) => [
-        ...prev,
-        { name: urlInput.trim(), type: "url" },
-      ]);
-      setUrlInput("");
+    const trimmedInput = urlInput.trim();
+
+    if (!trimmedInput) return;
+
+    if (!isValidArxivInput(trimmedInput)) {
+      setProcessMessage("Please enter a valid arXiv URL or arXiv ID.");
+      return;
     }
+
+    setUploads((prev) => [...prev, { name: trimmedInput, type: "url" }]);
+    setProcessMessage("");
+    setUrlInput("");
   };
 
 // Function to send files & URLs to Flask API
@@ -108,8 +121,8 @@ const handleProcessData = async () => {
   const formData = new FormData();
   uploads.forEach((item) => {
       if (item.type === "url") {
-          formData.append("urls", item.name);
-      } else if (item.type === "file" && item.file instanceof File) {
+          formData.append("arxiv_ids", item.name);
+      } else if (item.type === "file") {
           formData.append("files", item.file);  // File object
       }
   });
@@ -181,7 +194,7 @@ const handleProcessData = async () => {
             type="text"
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
-            placeholder="Enter a URL"
+            placeholder="Enter arXiv URL or arXiv ID"
             className="url-input"
           />
           <button type="button" onClick={handleUrlAdd} className="add-url-button">
