@@ -4,35 +4,47 @@ function ChatPane({
   question,
   setQuestion,
   loading,
-  chatHistory,
+  answer,
+  citations,
+  activeCitation,
+  onCitationClick,
   onSubmit,
 }) {
   return (
     <section className="pane chat-pane">
       <h2>Chat</h2>
 
-      <div className="chat-history">
-        {chatHistory.length === 0 ? (
-          <p className="placeholder">Ask a question to start the conversation.</p>
-        ) : (
-          chatHistory.map((entry, index) => (
-            <article key={index} className="answer-card">
-              <h3>Q: {entry.question}</h3>
-              <p>{entry.answer}</p>
-              {entry.sources?.length > 0 && (
-                <div className="source-list">
-                  <h4>Sources</h4>
-                  <ul>
-                    {entry.sources.map((source, sourceIndex) => (
-                      <li key={`${source}-${sourceIndex}`}>{source}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </article>
-          ))
-        )}
-      </div>
+      {loading && <p className="loading">Loading...</p>}
+
+      {!loading && answer && (
+        <div className="answer-section">
+          <h3>Answer</h3>
+          <p>{answer}</p>
+
+          {citations.length > 0 && (
+            <div className="citations-section">
+              <h4>Sources</h4>
+              <ul className="citation-list">
+                {citations.map((citation) => {
+                  const isActive = activeCitation?.id === citation.id;
+                  return (
+                    <li key={citation.id}>
+                      <button
+                        type="button"
+                        className={`citation-chip ${isActive ? "active" : ""}`}
+                        onClick={() => onCitationClick(citation)}
+                        title={citation.raw}
+                      >
+                        {citation.display}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
 
       <form onSubmit={onSubmit} className="question-form">
         <textarea

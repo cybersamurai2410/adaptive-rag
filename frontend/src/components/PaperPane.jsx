@@ -1,5 +1,23 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import UploadControls from "./UploadControls";
+
+const ARXIV_ID_PATTERN = /(?:^|\/)((?:\d{4}\.\d{4,5}(?:v\d+)?)|(?:[a-z-]+\/\d{7}(?:v\d+)?))(?:\.pdf)?$/i;
+
+const getArxivPdfUrl = (value) => {
+  const raw = String(value ?? "").trim();
+
+  if (/^https?:\/\//i.test(raw) && raw.includes("/pdf/")) {
+    return raw.endsWith(".pdf") ? raw : `${raw}.pdf`;
+  }
+
+  if (/^https?:\/\//i.test(raw) && raw.includes("/abs/")) {
+    return `${raw.replace("/abs/", "/pdf/")}.pdf`;
+  }
+
+  const match = raw.match(ARXIV_ID_PATTERN);
+  const arxivId = match ? match[1] : raw;
+  return `https://arxiv.org/pdf/${arxivId}.pdf`;
+};
 
 function PaperPane({
   uploads,
@@ -7,6 +25,7 @@ function PaperPane({
   setSelectedPaperIndex,
   currentPage,
   setCurrentPage,
+  activeCitation,
   urlInput,
   setUrlInput,
   handleFileUpload,
@@ -16,7 +35,35 @@ function PaperPane({
   processMessage,
   uploadFeedback,
 }) {
+  const [localObjectUrl, setLocalObjectUrl] = useState(null);
   const selectedPaper = uploads[selectedPaperIndex];
+
+  useEffect(() => {
+    if (!selectedPaper || selectedPaper.type !== "file") {
+      setLocalObjectUrl(null);
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(selectedPaper.file);
+    setLocalObjectUrl(objectUrl);
+
+    return () => {
+      URL.revokeObjectURL(objectUrl);
+    };
+  }, [selectedPaper]);
+
+  const viewerUrl = useMemo(() => {
+    if (!selectedPaper) return "";
+
+    if (selectedPaper.type === "file") {
+      return localObjectUrl ? `${localObjectUrl}#page=${currentPage}` : "";
+    }
+
+    const arxivPdfUrl = getArxivPdfUrl(selectedPaper.name);
+    return `${arxivPdfUrl}#page=${currentPage}`;
+  }, [selectedPaper, localObjectUrl, currentPage]);
+
+  const hasRegionHighlight = Boolean(activeCitation?.bbox);
 
   return (
     <section className="pane paper-pane">
@@ -51,7 +98,27 @@ function PaperPane({
             <p>
               <strong>{selectedPaper.name}</strong>
             </p>
-            <p>Viewer placeholder: connect your backend PDF page rendering here.</p>
+            {viewerUrl ? (
+              <iframe
+                key={`${selectedPaperIndex}-${currentPage}`}
+                title={`PDF viewer - ${selectedPaper.name}`}
+                src={viewerUrl}
+                className="pdf-frame"
+              />
+            ) : (
+              <p>Preparing PDF preview…</p>
+            )}
+
+            {activeCitation?.page && (
+              <p className="page-jump-message">
+                Jumped to page <strong>{activeCitation.page}</strong>. Page-level highlight enabled.
+              </p>
+            )}
+            {hasRegionHighlight && (
+              <p className="page-jump-message">
+                Region coordinates detected; render region overlays when backend bounding boxes are wired.
+              </p>
+            )}
           </>
         ) : (
           <p>Add files or arXiv IDs to start browsing papers.</p>
