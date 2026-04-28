@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import "./App.css";
 import PaperPane from "./components/PaperPane";
 import ChatPane from "./components/ChatPane";
@@ -31,6 +31,7 @@ const parseCitation = (citation, index) => {
     label: base.label || match?.groups?.label || "source",
     display: base.display || `${parsedPaperId}${parsedPage ? ` · p.${parsedPage}` : ""}`,
     bbox: base.bbox || base.boundingBox || base.coordinates || null,
+    snippet: typeof base.snippet === "string" ? base.snippet : "",
   };
 };
 
