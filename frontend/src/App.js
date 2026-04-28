@@ -27,13 +27,14 @@ function App() {
 
     try {
       const data = await askQuestion(trimmedQuestion);
-      const nextEntry = {
-        question: trimmedQuestion,
-        answer: data.answer || "No answer returned.",
-        sources: Array.isArray(data.citations) ? data.citations : [],
-      };
-
-      setChatHistory((prev) => [...prev, nextEntry]);
+      setChatHistory((prev) => [
+        ...prev,
+        {
+          question: trimmedQuestion,
+          answer: data.answer || "",
+          sources: Array.isArray(data.citations) ? data.citations : [],
+        },
+      ]);
       setQuestion("");
     } catch (error) {
       setChatHistory((prev) => [
@@ -44,8 +45,6 @@ function App() {
           sources: [],
         },
       ]);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -112,8 +111,6 @@ function App() {
       setProcessMessage("Data successfully added to vector database!");
     } catch (error) {
       setProcessMessage(`Error: ${error.message || "Failed to process data."}`);
-    } finally {
-      setProcessing(false);
     }
   };
 
@@ -123,15 +120,7 @@ function App() {
         <h1>Adaptive RAG Workspace</h1>
       </header>
 
-      <main className="workspace-grid">
-        <ChatPane
-          question={question}
-          setQuestion={setQuestion}
-          loading={loading}
-          chatHistory={chatHistory}
-          onSubmit={handleQuestionSubmit}
-        />
-
+      <main className="app-grid">
         <PaperPane
           uploads={uploads}
           selectedPaperIndex={selectedPaperIndex}
@@ -146,6 +135,14 @@ function App() {
           processing={processing}
           processMessage={processMessage}
           uploadFeedback={uploadFeedback}
+        />
+
+        <ChatPane
+          question={question}
+          setQuestion={setQuestion}
+          loading={loading}
+          chatHistory={chatHistory}
+          onSubmit={handleQuestionSubmit}
         />
       </main>
     </div>
