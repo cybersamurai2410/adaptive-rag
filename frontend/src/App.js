@@ -4,8 +4,39 @@ import PaperPane from "./components/PaperPane";
 import ChatPane from "./components/ChatPane";
 import { askQuestion, uploadData } from "./api/client";
 
+const ARXIV_ID_PATTERN = /(?:^|\/)((?:\d{4}\.\d{4,5}(?:v\d+)?)|(?:[a-z-]+\/\d{7}(?:v\d+)?))(?:\.pdf)?$/i;
+
+const normalizeArxivId = (value) => {
+  const raw = String(value ?? "").trim();
+  const match = raw.match(ARXIV_ID_PATTERN);
+  return match ? match[1].toLowerCase() : raw.toLowerCase();
+};
+
+const parseCitation = (citation, index) => {
+  const base = typeof citation === "object" && citation !== null ? citation : { raw: citation };
+  const raw = typeof base.raw === "string" ? base.raw.trim() : String(base.raw ?? citation ?? "").trim();
+
+  const pattern = /(?<paperId>(?:\d{4}\.\d{4,5}(?:v\d+)?)|(?:[a-z-]+\/\d{7}(?:v\d+)?))(?:(?:\s|,)+p\.?\s*(?<page>\d+))?(?:\s*\[(?<label>[^\]]+)\])?/i;
+  const match = raw.match(pattern);
+
+  const parsedPaperId = base.paperId || match?.groups?.paperId || "Unknown paper";
+  const parsedPage = base.page ?? (match?.groups?.page ? Number.parseInt(match.groups.page, 10) : null);
+
+  return {
+    id: base.id || `citation-${index}`,
+    raw,
+    paperId: parsedPaperId,
+    normalizedPaperId: normalizeArxivId(parsedPaperId),
+    page: Number.isNaN(parsedPage) ? null : parsedPage,
+    label: base.label || match?.groups?.label || "source",
+    display: base.display || `${parsedPaperId}${parsedPage ? ` · p.${parsedPage}` : ""}`,
+    bbox: base.bbox || base.boundingBox || base.coordinates || null,
+  };
+};
+
 function App() {
   const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState("");
   const [loading, setLoading] = useState(false);
   const [chatHistory, setChatHistory] = useState([]);
 
@@ -15,8 +46,34 @@ function App() {
   const [processMessage, setProcessMessage] = useState("");
   const [uploadFeedback, setUploadFeedback] = useState("");
 
+  const [rawCitations, setRawCitations] = useState([]);
+  const [activeCitation, setActiveCitation] = useState(null);
+
   const [selectedPaperIndex, setSelectedPaperIndex] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
+
+  const parsedCitations = useMemo(
+    () => rawCitations.map((citation, index) => parseCitation(citation, index)),
+    [rawCitations]
+  );
+
+  const handleCitationClick = (citation) => {
+    setActiveCitation(citation);
+
+    const matchingPaperIndex = uploads.findIndex((item) => {
+      const normalizedName = normalizeArxivId(item.name);
+      const normalizedCitation = citation.normalizedPaperId;
+      return normalizedName.includes(normalizedCitation) || normalizedCitation.includes(normalizedName);
+    });
+
+    if (matchingPaperIndex >= 0) {
+      setSelectedPaperIndex(matchingPaperIndex);
+    }
+
+    if (citation.page) {
+      setCurrentPage(citation.page);
+    }
+  };
 
   const handleQuestionSubmit = async (e) => {
     e.preventDefault();
@@ -24,27 +81,30 @@ function App() {
     if (!trimmedQuestion) return;
 
     setLoading(true);
+    setAnswer("");
+    setRawCitations([]);
+    setActiveCitation(null);
 
     try {
       const data = await askQuestion(trimmedQuestion);
+      const nextAnswer = data.answer || "";
+      const nextCitations = Array.isArray(data.citations) ? data.citations : [];
+
+      setAnswer(nextAnswer);
+      setRawCitations(nextCitations);
       setChatHistory((prev) => [
         ...prev,
         {
           question: trimmedQuestion,
-          answer: data.answer || "",
-          sources: Array.isArray(data.citations) ? data.citations : [],
+          answer: nextAnswer,
+          sources: nextCitations,
         },
       ]);
-      setQuestion("");
-    } catch (error) {
-      setChatHistory((prev) => [
-        ...prev,
-        {
-          question: trimmedQuestion,
-          answer: "Error fetching answer. Please try again.",
-          sources: [],
-        },
-      ]);
+    } catch (err) {
+      setAnswer("Error fetching answer. Please try again.");
+      setRawCitations([]);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -66,9 +126,7 @@ function App() {
     setUploads((prev) => [...prev, ...fileItems]);
 
     if (rejectedFiles.length > 0) {
-      setUploadFeedback(
-        `Skipped ${rejectedFiles.length} file(s): PDF files only are supported.`
-      );
+      setUploadFeedback(`Skipped ${rejectedFiles.length} file(s): PDF files only are supported.`);
     } else {
       setUploadFeedback("");
     }
@@ -111,6 +169,8 @@ function App() {
       setProcessMessage("Data successfully added to vector database!");
     } catch (error) {
       setProcessMessage(`Error: ${error.message || "Failed to process data."}`);
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -120,13 +180,26 @@ function App() {
         <h1>Adaptive RAG Workspace</h1>
       </header>
 
-      <main className="app-grid">
+      <div className="app-grid">
+        <ChatPane
+          question={question}
+          setQuestion={setQuestion}
+          loading={loading}
+          answer={answer}
+          citations={parsedCitations}
+          activeCitation={activeCitation}
+          onCitationClick={handleCitationClick}
+          chatHistory={chatHistory}
+          onSubmit={handleQuestionSubmit}
+        />
+
         <PaperPane
           uploads={uploads}
           selectedPaperIndex={selectedPaperIndex}
           setSelectedPaperIndex={setSelectedPaperIndex}
           currentPage={currentPage}
           setCurrentPage={setCurrentPage}
+          activeCitation={activeCitation}
           urlInput={urlInput}
           setUrlInput={setUrlInput}
           handleFileUpload={handleFileUpload}
@@ -136,15 +209,7 @@ function App() {
           processMessage={processMessage}
           uploadFeedback={uploadFeedback}
         />
-
-        <ChatPane
-          question={question}
-          setQuestion={setQuestion}
-          loading={loading}
-          chatHistory={chatHistory}
-          onSubmit={handleQuestionSubmit}
-        />
-      </main>
+      </div>
     </div>
   );
 }
