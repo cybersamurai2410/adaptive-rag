@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, List, Optional
 from typing_extensions import TypedDict
 
 from langchain_core.documents import Document
@@ -22,7 +22,7 @@ class GraphState(TypedDict):
     paper_id: Optional[str]
     generation: str
     documents: List[Document]
-    citations: List[str]
+    citations: List[Any]
 
 
 vector_db = VectorDB()
@@ -97,8 +97,28 @@ def generate(state: GraphState):
     citations = []
     for d in docs:
         ref = d.metadata.get("reference")
-        if ref and ref not in citations:
-            citations.append(ref)
+        if not ref:
+            continue
+
+        page_number = d.metadata.get("page")
+        source_name = d.metadata.get("source_name", "")
+        paper_id = state.get("paper_id") or source_name or "unknown"
+        snippet = " ".join((d.page_content or "").split())
+        snippet = snippet[:420] + ("..." if len(snippet) > 420 else "")
+
+        citation_obj = {
+            "id": ref,
+            "raw": ref,
+            "paperId": paper_id,
+            "page": page_number,
+            "label": d.metadata.get("modality", "page"),
+            "display": ref,
+            "snippet": snippet,
+            "bbox": d.metadata.get("bbox"),
+        }
+
+        if not any(c.get("raw") == ref for c in citations):
+            citations.append(citation_obj)
 
     return {
         "question": state["question"],

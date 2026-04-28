@@ -64,6 +64,7 @@ function PaperPane({
   }, [selectedPaper, localObjectUrl, currentPage]);
 
   const hasRegionHighlight = Boolean(activeCitation?.bbox);
+  const hasSnippetHighlight = Boolean(activeCitation?.snippet);
 
   return (
     <section className="pane paper-pane">
@@ -113,6 +114,12 @@ function PaperPane({
               <p className="page-jump-message">
                 Jumped to page <strong>{activeCitation.page}</strong>. Page-level highlight enabled.
               </p>
+            )}
+            {hasSnippetHighlight && (
+              <div className="snippet-highlight">
+                <p className="snippet-title">Highlighted section</p>
+                <p>{activeCitation.snippet}</p>
+              </div>
             )}
             {hasRegionHighlight && (
               <p className="page-jump-message">
