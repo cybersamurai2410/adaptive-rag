@@ -46,8 +46,6 @@ function App() {
         },
       ]);
     }
-
-    setLoading(false);
   };
 
   const handleFileUpload = (e) => {
@@ -114,8 +112,6 @@ function App() {
     } catch (error) {
       setProcessMessage(`Error: ${error.message || "Failed to process data."}`);
     }
-
-    setProcessing(false);
   };
 
   return (
