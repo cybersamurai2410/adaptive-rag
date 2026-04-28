@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import "./App.css";
 import PaperPane from "./components/PaperPane";
 import ChatPane from "./components/ChatPane";
